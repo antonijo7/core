@@ -1,7 +1,9 @@
 """Constants for the onvif component."""
+
+import asyncio
 import logging
 
-from httpx import RequestError
+import aiohttp
 from onvif.exceptions import ONVIFError
 from zeep.exceptions import Fault, TransportError
 
@@ -13,6 +15,7 @@ DEFAULT_PORT = 80
 DEFAULT_ARGUMENTS = "-pred 1"
 
 CONF_DEVICE_ID = "deviceid"
+CONF_HARDWARE = "hardware"
 CONF_SNAPSHOT_AUTH = "snapshot_auth"
 CONF_ENABLE_WEBHOOKS = "enable_webhooks"
 DEFAULT_ENABLE_WEBHOOKS = True
@@ -46,4 +49,10 @@ SERVICE_PTZ = "ptz"
 
 # Some cameras don't support the GetServiceCapabilities call
 # and will return a 404 error which is caught by TransportError
-GET_CAPABILITIES_EXCEPTIONS = (ONVIFError, Fault, RequestError, TransportError)
+GET_CAPABILITIES_EXCEPTIONS = (
+    ONVIFError,
+    Fault,
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    TransportError,
+)

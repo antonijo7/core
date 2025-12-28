@@ -1,37 +1,25 @@
 {
   "config": {
-    "step": {
-      "user": {
-        "data": {
-          "station_id": "Sensor ID",
-          "show_on_map": "Show on map"
-        }
-      }
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]"
     },
     "error": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
-      "invalid_sensor": "Sensor not available or invalid",
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_sensor": "Sensor not available or invalid"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "sensor_id": "Sensor ID",
+          "show_on_map": "Show on map"
+        }
+      }
     }
   },
   "entity": {
     "sensor": {
-      "humidity": {
-        "name": "[%key:component::sensor::entity_component::humidity::name%]"
-      },
-      "pressure": {
-        "name": "[%key:component::sensor::entity_component::pressure::name%]"
-      },
-      "pressure_at_sealevel": { "name": "Pressure at sealevel" },
-      "pm10": {
-        "name": "[%key:component::sensor::entity_component::pm10::name%]"
-      },
-      "pm25": {
-        "name": "[%key:component::sensor::entity_component::pm25::name%]"
-      },
-      "temperature": {
-        "name": "[%key:component::sensor::entity_component::temperature::name%]"
-      }
+      "pressure_at_sealevel": { "name": "Pressure at sea level" }
     }
   }
 }

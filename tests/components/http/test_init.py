@@ -1,28 +1,38 @@
 """The tests for the Home Assistant HTTP component."""
+
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from http import HTTPStatus
 from ipaddress import ip_network
 import logging
 from pathlib import Path
-import time
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
-from homeassistant.auth.providers.legacy_api_password import (
-    LegacyApiPasswordAuthProvider,
-)
-import homeassistant.components.http as http
+from homeassistant.auth.providers.homeassistant import HassAuthProvider
+from homeassistant.components import cloud, http
+from homeassistant.components.cloud import CloudNotAvailable
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.http import KEY_HASS
 from homeassistant.helpers.network import NoURLAvailableError
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ssl import server_context_intermediate, server_context_modern
 
-from tests.common import async_fire_time_changed
-from tests.test_util.aiohttp import AiohttpClientMockResponse
+from tests.common import async_call_logger_set_level, async_fire_time_changed
 from tests.typing import ClientSessionGenerator
+
+
+@pytest.fixture(autouse=True)
+def disable_http_server() -> None:
+    """Override the global disable_http_server fixture with an empty fixture.
+
+    This allows the HTTP server to start in tests that need it.
+    """
+    return
 
 
 def _setup_broken_ssl_pem_files(tmp_path: Path) -> tuple[Path, Path]:
@@ -85,11 +95,15 @@ class TestView(http.HomeAssistantView):
 
 
 async def test_registering_view_while_running(
-    hass: HomeAssistant, aiohttp_client: ClientSessionGenerator, aiohttp_unused_port
+    hass: HomeAssistant,
+    aiohttp_client: ClientSessionGenerator,
+    unused_tcp_port_factory: Callable[[], int],
 ) -> None:
     """Test that we can register a view while the server is running."""
     await async_setup_component(
-        hass, http.DOMAIN, {http.DOMAIN: {http.CONF_SERVER_PORT: aiohttp_unused_port()}}
+        hass,
+        http.DOMAIN,
+        {http.DOMAIN: {http.CONF_SERVER_PORT: unused_tcp_port_factory()}},
     )
 
     await hass.async_start()
@@ -97,11 +111,20 @@ async def test_registering_view_while_running(
     hass.http.register_view(TestView)
 
 
+async def test_homeassistant_assigned_to_app(hass: HomeAssistant) -> None:
+    """Test HomeAssistant instance is assigned to HomeAssistantApp."""
+    assert await async_setup_component(hass, "api", {"http": {}})
+    await hass.async_start()
+    assert hass.http.app[KEY_HASS] == hass
+    assert hass.http.app["hass"] == hass  # For backwards compatibility
+    await hass.async_stop()
+
+
 async def test_not_log_password(
     hass: HomeAssistant,
     hass_client_no_auth: ClientSessionGenerator,
     caplog: pytest.LogCaptureFixture,
-    legacy_auth: LegacyApiPasswordAuthProvider,
+    local_auth: HassAuthProvider,
 ) -> None:
     """Test access with password doesn't get logged."""
     assert await async_setup_component(hass, "api", {"http": {}})
@@ -162,10 +185,13 @@ async def test_ssl_profile_defaults_modern(hass: HomeAssistant, tmp_path: Path) 
         _setup_empty_ssl_pem_files, tmp_path
     )
 
-    with patch("ssl.SSLContext.load_cert_chain"), patch(
-        "homeassistant.util.ssl.server_context_modern",
-        side_effect=server_context_modern,
-    ) as mock_context:
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ) as mock_context,
+    ):
         assert (
             await async_setup_component(
                 hass,
@@ -189,10 +215,13 @@ async def test_ssl_profile_change_intermediate(
         _setup_empty_ssl_pem_files, tmp_path
     )
 
-    with patch("ssl.SSLContext.load_cert_chain"), patch(
-        "homeassistant.util.ssl.server_context_intermediate",
-        side_effect=server_context_intermediate,
-    ) as mock_context:
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_intermediate",
+            side_effect=server_context_intermediate,
+        ) as mock_context,
+    ):
         assert (
             await async_setup_component(
                 hass,
@@ -220,10 +249,13 @@ async def test_ssl_profile_change_modern(hass: HomeAssistant, tmp_path: Path) ->
         _setup_empty_ssl_pem_files, tmp_path
     )
 
-    with patch("ssl.SSLContext.load_cert_chain"), patch(
-        "homeassistant.util.ssl.server_context_modern",
-        side_effect=server_context_modern,
-    ) as mock_context:
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ) as mock_context,
+    ):
         assert (
             await async_setup_component(
                 hass,
@@ -250,12 +282,14 @@ async def test_peer_cert(hass: HomeAssistant, tmp_path: Path) -> None:
         _setup_empty_ssl_pem_files, tmp_path
     )
 
-    with patch("ssl.SSLContext.load_cert_chain"), patch(
-        "ssl.SSLContext.load_verify_locations"
-    ) as mock_load_verify_locations, patch(
-        "homeassistant.util.ssl.server_context_modern",
-        side_effect=server_context_modern,
-    ) as mock_context:
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch("ssl.SSLContext.load_verify_locations") as mock_load_verify_locations,
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ) as mock_context,
+    ):
         assert (
             await async_setup_component(
                 hass,
@@ -287,7 +321,7 @@ async def test_emergency_ssl_certificate_when_invalid(
         _setup_broken_ssl_pem_files, tmp_path
     )
 
-    hass.config.safe_mode = True
+    hass.config.recovery_mode = True
     assert (
         await async_setup_component(
             hass,
@@ -302,17 +336,17 @@ async def test_emergency_ssl_certificate_when_invalid(
     await hass.async_start()
     await hass.async_block_till_done()
     assert (
-        "Home Assistant is running in safe mode with an emergency self signed ssl certificate because the configured SSL certificate was not usable"
+        "Home Assistant is running in recovery mode with an emergency self signed ssl certificate because the configured SSL certificate was not usable"
         in caplog.text
     )
 
     assert hass.http.site is not None
 
 
-async def test_emergency_ssl_certificate_not_used_when_not_safe_mode(
+async def test_emergency_ssl_certificate_not_used_when_not_recovery_mode(
     hass: HomeAssistant, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Test an emergency cert is only used in safe mode."""
+    """Test an emergency cert is only used in recovery mode."""
 
     cert_path, key_path = await hass.async_add_executor_job(
         _setup_broken_ssl_pem_files, tmp_path
@@ -336,7 +370,7 @@ async def test_emergency_ssl_certificate_when_invalid_get_url_fails(
     cert_path, key_path = await hass.async_add_executor_job(
         _setup_broken_ssl_pem_files, tmp_path
     )
-    hass.config.safe_mode = True
+    hass.config.recovery_mode = True
 
     with patch(
         "homeassistant.components.http.get_url", side_effect=NoURLAvailableError
@@ -356,7 +390,7 @@ async def test_emergency_ssl_certificate_when_invalid_get_url_fails(
 
     assert len(mock_get_url.mock_calls) == 1
     assert (
-        "Home Assistant is running in safe mode with an emergency self signed ssl certificate because the configured SSL certificate was not usable"
+        "Home Assistant is running in recovery mode with an emergency self signed ssl certificate because the configured SSL certificate was not usable"
         in caplog.text
     )
 
@@ -371,7 +405,7 @@ async def test_invalid_ssl_and_cannot_create_emergency_cert(
     cert_path, key_path = await hass.async_add_executor_job(
         _setup_broken_ssl_pem_files, tmp_path
     )
-    hass.config.safe_mode = True
+    hass.config.recovery_mode = True
 
     with patch(
         "homeassistant.components.http.x509.CertificateBuilder", side_effect=OSError
@@ -408,7 +442,7 @@ async def test_invalid_ssl_and_cannot_create_emergency_cert_with_ssl_peer_cert(
     cert_path, key_path = await hass.async_add_executor_job(
         _setup_broken_ssl_pem_files, tmp_path
     )
-    hass.config.safe_mode = True
+    hass.config.recovery_mode = True
 
     with patch(
         "homeassistant.components.http.x509.CertificateBuilder", side_effect=OSError
@@ -443,11 +477,13 @@ async def test_cors_defaults(hass: HomeAssistant) -> None:
 
 
 async def test_storing_config(
-    hass: HomeAssistant, aiohttp_client: ClientSessionGenerator, aiohttp_unused_port
+    hass: HomeAssistant,
+    aiohttp_client: ClientSessionGenerator,
+    unused_tcp_port_factory: Callable[[], int],
 ) -> None:
     """Test that we store last working config."""
     config = {
-        http.CONF_SERVER_PORT: aiohttp_unused_port(),
+        http.CONF_SERVER_PORT: unused_tcp_port_factory(),
         "use_x_forwarded_for": True,
         "trusted_proxies": ["192.168.1.100"],
     }
@@ -459,7 +495,7 @@ async def test_storing_config(
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=200))
     await hass.async_block_till_done()
 
-    restored = await hass.components.http.async_get_last_config()
+    restored = await http.async_get_last_config(hass)
     restored["trusted_proxies"][0] = ip_network(restored["trusted_proxies"][0])
 
     assert restored == http.HTTP_SCHEMA(config)
@@ -478,43 +514,240 @@ async def test_logging(
         )
     )
     hass.states.async_set("logging.entity", "hello")
-    await hass.services.async_call(
-        "logger",
-        "set_level",
-        {"aiohttp.access": "info"},
-        blocking=True,
-    )
-    client = await hass_client()
-    response = await client.get("/api/states/logging.entity")
-    assert response.status == HTTPStatus.OK
+    async with async_call_logger_set_level(
+        "aiohttp.access", "INFO", hass=hass, caplog=caplog
+    ):
+        client = await hass_client()
+        response = await client.get("/api/states/logging.entity")
+        assert response.status == HTTPStatus.OK
 
-    assert "GET /api/states/logging.entity" in caplog.text
-    caplog.clear()
-    await hass.services.async_call(
-        "logger",
-        "set_level",
-        {"aiohttp.access": "warning"},
-        blocking=True,
-    )
-    response = await client.get("/api/states/logging.entity")
-    assert response.status == HTTPStatus.OK
-    assert "GET /api/states/logging.entity" not in caplog.text
+        assert "GET /api/states/logging.entity" in caplog.text
+        caplog.clear()
+    async with async_call_logger_set_level(
+        "aiohttp.access", "WARNING", hass=hass, caplog=caplog
+    ):
+        response = await client.get("/api/states/logging.entity")
+        assert response.status == HTTPStatus.OK
+        assert "GET /api/states/logging.entity" not in caplog.text
 
 
-async def test_hass_access_logger_at_info_level(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+async def test_ssl_issue_if_no_urls_configured(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    issue_registry: ir.IssueRegistry,
 ) -> None:
-    """Test that logging happens at info level."""
-    test_logger = logging.getLogger("test.aiohttp.logger")
-    logger = http.HomeAssistantAccessLogger(test_logger)
-    mock_request = MagicMock()
-    response = AiohttpClientMockResponse(
-        "POST", "http://127.0.0.1", status=HTTPStatus.OK
+    """Test raising SSL issue if no external or internal URL is configured."""
+
+    assert hass.config.external_url is None
+    assert hass.config.internal_url is None
+
+    cert_path, key_path, _ = await hass.async_add_executor_job(
+        _setup_empty_ssl_pem_files, tmp_path
     )
-    setattr(response, "body_length", 42)
-    logger.log(mock_request, response, time.time())
-    assert "42" in caplog.text
-    caplog.clear()
-    test_logger.setLevel(logging.WARNING)
-    logger.log(mock_request, response, time.time())
-    assert "42" not in caplog.text
+
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ),
+    ):
+        assert await async_setup_component(
+            hass,
+            "http",
+            {"http": {"ssl_certificate": cert_path, "ssl_key": key_path}},
+        )
+        await hass.async_start()
+        await hass.async_block_till_done()
+
+    assert ("http", "ssl_configured_without_configured_urls") in issue_registry.issues
+
+
+async def test_ssl_issue_if_using_cloud(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """Test raising no SSL issue if not right configured but using cloud."""
+    assert hass.config.external_url is None
+    assert hass.config.internal_url is None
+
+    cert_path, key_path, _ = await hass.async_add_executor_job(
+        _setup_empty_ssl_pem_files, tmp_path
+    )
+
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch.object(cloud, "async_remote_ui_url", return_value="https://example.com"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ),
+    ):
+        assert await async_setup_component(
+            hass,
+            "http",
+            {"http": {"ssl_certificate": cert_path, "ssl_key": key_path}},
+        )
+        await hass.async_start()
+        await hass.async_block_till_done()
+
+    assert (
+        "http",
+        "ssl_configured_without_configured_urls",
+    ) not in issue_registry.issues
+
+
+async def test_ssl_issue_if_not_connected_to_cloud(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    """Test raising no SSL issue if not right configured and not connected to cloud."""
+    assert hass.config.external_url is None
+    assert hass.config.internal_url is None
+
+    cert_path, key_path, _ = await hass.async_add_executor_job(
+        _setup_empty_ssl_pem_files, tmp_path
+    )
+
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ),
+        patch(
+            "homeassistant.components.cloud.async_remote_ui_url",
+            side_effect=CloudNotAvailable,
+        ),
+    ):
+        assert await async_setup_component(
+            hass,
+            "http",
+            {"http": {"ssl_certificate": cert_path, "ssl_key": key_path}},
+        )
+        await hass.async_start()
+        await hass.async_block_till_done()
+
+    assert ("http", "ssl_configured_without_configured_urls") in issue_registry.issues
+
+
+@pytest.mark.parametrize(
+    ("external_url", "internal_url"),
+    [
+        ("https://example.com", "https://example.local"),
+        (None, "http://example.local"),
+        ("https://example.com", None),
+    ],
+)
+async def test_ssl_issue_urls_configured(
+    hass: HomeAssistant,
+    tmp_path: Path,
+    issue_registry: ir.IssueRegistry,
+    external_url: str | None,
+    internal_url: str | None,
+) -> None:
+    """Test raising SSL issue if no external or internal URL is configured."""
+
+    cert_path, key_path, _ = await hass.async_add_executor_job(
+        _setup_empty_ssl_pem_files, tmp_path
+    )
+
+    hass.config.external_url = external_url
+    hass.config.internal_url = internal_url
+
+    with (
+        patch("ssl.SSLContext.load_cert_chain"),
+        patch(
+            "homeassistant.util.ssl.server_context_modern",
+            side_effect=server_context_modern,
+        ),
+    ):
+        assert await async_setup_component(
+            hass,
+            "http",
+            {"http": {"ssl_certificate": cert_path, "ssl_key": key_path}},
+        )
+        await hass.async_start()
+        await hass.async_block_till_done()
+
+    assert (
+        "http",
+        "ssl_configured_without_configured_urls",
+    ) not in issue_registry.issues
+
+
+@pytest.mark.parametrize(
+    (
+        "hassio",
+        "http_config",
+        "expected_serverhost",
+        "expected_warning_count",
+        "expected_issues",
+    ),
+    [
+        (False, {}, ["0.0.0.0", "::"], 0, set()),
+        (
+            False,
+            {"server_host": "0.0.0.0"},
+            ["0.0.0.0"],
+            1,
+            {("http", "server_host_deprecated")},
+        ),
+        (True, {}, ["0.0.0.0", "::"], 0, set()),
+        (
+            True,
+            {"server_host": "0.0.0.0"},
+            [
+                "0.0.0.0",
+            ],
+            1,
+            {("http", "server_host_deprecated_hassio")},
+        ),
+    ],
+)
+async def test_server_host(
+    hass: HomeAssistant,
+    hassio: bool,
+    issue_registry: ir.IssueRegistry,
+    http_config: dict,
+    expected_serverhost: list,
+    expected_warning_count: int,
+    expected_issues: set[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test server_host behavior."""
+    mock_server = Mock()
+    with (
+        patch("homeassistant.components.http.is_hassio", return_value=hassio),
+        patch(
+            "asyncio.BaseEventLoop.create_server", return_value=mock_server
+        ) as mock_create_server,
+    ):
+        assert await async_setup_component(
+            hass,
+            "http",
+            {"http": http_config},
+        )
+        await hass.async_start()
+        await hass.async_block_till_done()
+
+    mock_create_server.assert_called_once_with(
+        ANY,
+        expected_serverhost,
+        8123,
+        ssl=None,
+        backlog=128,
+        reuse_address=None,
+        reuse_port=None,
+    )
+
+    assert (
+        caplog.text.count(
+            "The 'server_host' option is deprecated, please remove it from your configuration"
+        )
+        == expected_warning_count
+    )
+
+    assert set(issue_registry.issues) == expected_issues

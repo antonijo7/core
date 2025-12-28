@@ -1,4 +1,5 @@
 """Helper methods for language selection in Home Assistant."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -10,6 +11,14 @@ import re
 from homeassistant.const import MATCH_ALL
 
 SEPARATOR_RE = re.compile(r"[-_]")
+SAME_LANGUAGES = (
+    # no = spoken Norwegian
+    # nb = written Norwegian (Bokmål)
+    ("nb", "no"),
+    # he = Hebrew new code
+    # iw = Hebrew old code
+    ("he", "iw"),
+)
 
 
 def preferred_regions(
@@ -60,9 +69,7 @@ def is_language_match(lang_1: str, lang_2: str) -> bool:
         # Exact match
         return True
 
-    if {lang_1, lang_2} == {"no", "nb"}:
-        # no = spoken Norwegian
-        # nb = written Norwegian (Bokmål)
+    if tuple(sorted([lang_1, lang_2])) in SAME_LANGUAGES:
         return True
 
     return False
@@ -97,20 +104,30 @@ class Dialect:
             return (-1, 0)
 
         is_exact_language = self.language == dialect.language
+        is_exact_language_and_code = is_exact_language and (self.code == dialect.code)
 
         if (self.region is None) and (dialect.region is None):
             # Weak match with no region constraint
             # Prefer exact language match
-            return (2 if is_exact_language else 1, 0)
+            if is_exact_language_and_code:
+                return (3, 0)
+
+            if is_exact_language:
+                return (2, 0)
+
+            return (1, 0)
 
         if (self.region is not None) and (dialect.region is not None):
             if self.region == dialect.region:
                 # Same language + region match
                 # Prefer exact language match
-                return (
-                    math.inf,
-                    1 if is_exact_language else 0,
-                )
+                if is_exact_language_and_code:
+                    return (math.inf, 2)
+
+                if is_exact_language:
+                    return (math.inf, 1)
+
+                return (math.inf, 0)
 
             # Regions are both set, but don't match
             return (0, 0)
@@ -130,13 +147,10 @@ class Dialect:
                 region_idx = pref_regions.index(self.region)
             elif dialect.region is not None:
                 region_idx = pref_regions.index(dialect.region)
-            else:
-                # Can't happen, but mypy is not smart enough
-                raise ValueError()
 
             # More preferred regions are at the front.
-            # Add 1 to boost above a weak match where no regions are set.
-            return (1 + (len(pref_regions) - region_idx), 0)
+            # Add 2 to boost above a weak match where no regions are set.
+            return (2 + (len(pref_regions) - region_idx), 0)
         except ValueError:
             # Region was not in preferred list
             pass
@@ -193,3 +207,14 @@ def matches(
 
     # Score < 0 is not a match
     return [tag for _dialect, score, tag in scored if score[0] >= 0]
+
+
+def intersect(languages_1: set[str], languages_2: set[str]) -> set[str]:
+    """Intersect two sets of languages using is_match for aliases."""
+    languages = set()
+    for lang_1 in languages_1:
+        for lang_2 in languages_2:
+            if is_language_match(lang_1, lang_2):
+                languages.add(lang_1)
+
+    return languages

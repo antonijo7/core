@@ -4,7 +4,8 @@
   "codeowners": ["@ntilley905"],
   "config_flow": true,
   "documentation": "https://www.home-assistant.io/integrations/faa_delays",
+  "integration_type": "service",
   "iot_class": "cloud_polling",
   "loggers": ["faadelays"],
-  "requirements": ["faadelays==0.0.7"]
+  "requirements": ["faadelays==2023.9.1"]
 }

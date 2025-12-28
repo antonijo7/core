@@ -1,4 +1,5 @@
 """The Coordinator for easyEnergy."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -16,9 +17,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import dt
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, LOGGER, SCAN_INTERVAL, THRESHOLD_HOUR
+
+type EasyEnergyConfigEntry = ConfigEntry[EasyEnergyDataUpdateCoordinator]
 
 
 class EasyEnergyData(NamedTuple):
@@ -32,22 +35,23 @@ class EasyEnergyData(NamedTuple):
 class EasyEnergyDataUpdateCoordinator(DataUpdateCoordinator[EasyEnergyData]):
     """Class to manage fetching easyEnergy data from single endpoint."""
 
-    config_entry: ConfigEntry
+    config_entry: EasyEnergyConfigEntry
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, entry: EasyEnergyConfigEntry) -> None:
         """Initialize global easyEnergy data updater."""
         super().__init__(
             hass,
             LOGGER,
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
+            config_entry=entry,
         )
 
         self.easyenergy = EasyEnergy(session=async_get_clientsession(hass))
 
     async def _async_update_data(self) -> EasyEnergyData:
         """Fetch data from easyEnergy."""
-        today = dt.now().date()
+        today = dt_util.now().date()
         gas_today = None
         energy_tomorrow = None
 
@@ -62,7 +66,7 @@ class EasyEnergyDataUpdateCoordinator(DataUpdateCoordinator[EasyEnergyData]):
             except EasyEnergyNoDataError:
                 LOGGER.debug("No data for gas prices for easyEnergy integration")
             # Energy for tomorrow only after 14:00 UTC
-            if dt.utcnow().hour >= THRESHOLD_HOUR:
+            if dt_util.utcnow().hour >= THRESHOLD_HOUR:
                 tomorrow = today + timedelta(days=1)
                 try:
                     energy_tomorrow = await self.easyenergy.energy_prices(

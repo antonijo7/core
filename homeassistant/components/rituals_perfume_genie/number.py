@@ -1,4 +1,5 @@
 """Support for Rituals Perfume Genie numbers."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -10,33 +11,25 @@ from pyrituals import Diffuser
 from homeassistant.components.number import NumberEntity, NumberEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import RitualsDataUpdateCoordinator
 from .entity import DiffuserEntity
 
 
-@dataclass
-class RitualsNumberEntityDescriptionMixin:
-    """Mixin for required keys."""
+@dataclass(frozen=True, kw_only=True)
+class RitualsNumberEntityDescription(NumberEntityDescription):
+    """Class describing Rituals number entities."""
 
     value_fn: Callable[[Diffuser], int]
     set_value_fn: Callable[[Diffuser, int], Awaitable[Any]]
 
 
-@dataclass
-class RitualsNumberEntityDescription(
-    NumberEntityDescription, RitualsNumberEntityDescriptionMixin
-):
-    """Class describing Rituals number entities."""
-
-
 ENTITY_DESCRIPTIONS = (
     RitualsNumberEntityDescription(
         key="perfume_amount",
-        name="Perfume Amount",
-        icon="mdi:gauge",
+        translation_key="perfume_amount",
         native_min_value=1,
         native_max_value=3,
         value_fn=lambda diffuser: diffuser.perfume_amount,
@@ -48,7 +41,7 @@ ENTITY_DESCRIPTIONS = (
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the diffuser numbers."""
     coordinators: dict[str, RitualsDataUpdateCoordinator] = hass.data[DOMAIN][
@@ -65,15 +58,6 @@ class RitualsNumberEntity(DiffuserEntity, NumberEntity):
     """Representation of a diffuser number entity."""
 
     entity_description: RitualsNumberEntityDescription
-
-    def __init__(
-        self,
-        coordinator: RitualsDataUpdateCoordinator,
-        description: RitualsNumberEntityDescription,
-    ) -> None:
-        """Initialize the diffuser perfume amount number."""
-        super().__init__(coordinator, description)
-        self._attr_name = f"{coordinator.diffuser.name} {description.name}"
 
     @property
     def native_value(self) -> int:

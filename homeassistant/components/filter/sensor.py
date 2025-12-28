@@ -1,4 +1,5 @@
 """Allows the creation of a sensor that filters state property."""
+
 from __future__ import annotations
 
 from collections import Counter, deque
@@ -18,13 +19,12 @@ from homeassistant.components.input_number import DOMAIN as INPUT_NUMBER_DOMAIN
 from homeassistant.components.recorder import get_instance, history
 from homeassistant.components.sensor import (
     ATTR_STATE_CLASS,
-    DEVICE_CLASSES as SENSOR_DEVICE_CLASSES,
     DOMAIN as SENSOR_DOMAIN,
-    PLATFORM_SCHEMA,
-    STATE_CLASSES as SENSOR_STATE_CLASSES,
+    PLATFORM_SCHEMA as SENSOR_PLATFORM_SCHEMA,
     SensorDeviceClass,
     SensorEntity,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
@@ -36,48 +36,56 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import Event, HomeAssistant, State, callback
-import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.core import (
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.entity_platform import (
+    AddConfigEntryEntitiesCallback,
+    AddEntitiesCallback,
+)
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.reload import async_setup_reload_service
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType, StateType
+from homeassistant.util import dt as dt_util
 from homeassistant.util.decorator import Registry
-import homeassistant.util.dt as dt_util
 
-from . import DOMAIN, PLATFORMS
+from .const import (
+    CONF_FILTER_LOWER_BOUND,
+    CONF_FILTER_NAME,
+    CONF_FILTER_PRECISION,
+    CONF_FILTER_RADIUS,
+    CONF_FILTER_TIME_CONSTANT,
+    CONF_FILTER_UPPER_BOUND,
+    CONF_FILTER_WINDOW_SIZE,
+    CONF_FILTERS,
+    CONF_TIME_SMA_TYPE,
+    DEFAULT_FILTER_RADIUS,
+    DEFAULT_FILTER_TIME_CONSTANT,
+    DEFAULT_PRECISION,
+    DEFAULT_WINDOW_SIZE,
+    DOMAIN,
+    FILTER_NAME_LOWPASS,
+    FILTER_NAME_OUTLIER,
+    FILTER_NAME_RANGE,
+    FILTER_NAME_THROTTLE,
+    FILTER_NAME_TIME_SMA,
+    FILTER_NAME_TIME_THROTTLE,
+    PLATFORMS,
+    TIME_SMA_LAST,
+    WINDOW_SIZE_UNIT_NUMBER_EVENTS,
+    WINDOW_SIZE_UNIT_TIME,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-FILTER_NAME_RANGE = "range"
-FILTER_NAME_LOWPASS = "lowpass"
-FILTER_NAME_OUTLIER = "outlier"
-FILTER_NAME_THROTTLE = "throttle"
-FILTER_NAME_TIME_THROTTLE = "time_throttle"
-FILTER_NAME_TIME_SMA = "time_simple_moving_average"
 FILTERS: Registry[str, type[Filter]] = Registry()
 
-CONF_FILTERS = "filters"
-CONF_FILTER_NAME = "filter"
-CONF_FILTER_WINDOW_SIZE = "window_size"
-CONF_FILTER_PRECISION = "precision"
-CONF_FILTER_RADIUS = "radius"
-CONF_FILTER_TIME_CONSTANT = "time_constant"
-CONF_FILTER_LOWER_BOUND = "lower_bound"
-CONF_FILTER_UPPER_BOUND = "upper_bound"
-CONF_TIME_SMA_TYPE = "type"
-
-TIME_SMA_LAST = "last"
-
-WINDOW_SIZE_UNIT_NUMBER_EVENTS = 1
-WINDOW_SIZE_UNIT_TIME = 2
-
-DEFAULT_WINDOW_SIZE = 1
-DEFAULT_PRECISION = 2
-DEFAULT_FILTER_RADIUS = 2.0
-DEFAULT_FILTER_TIME_CONSTANT = 10
-
-NAME_TEMPLATE = "{} filter"
 ICON = "mdi:chart-line-variant"
 
 FILTER_SCHEMA = vol.Schema({vol.Optional(CONF_FILTER_PRECISION): vol.Coerce(int)})
@@ -144,7 +152,7 @@ FILTER_TIME_THROTTLE_SCHEMA = FILTER_SCHEMA.extend(
     }
 )
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_ENTITY_ID): vol.Any(
             cv.entity_domain(SENSOR_DOMAIN),
@@ -193,6 +201,32 @@ async def async_setup_platform(
     async_add_entities([SensorFilter(name, unique_id, entity_id, filters)])
 
 
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up the Filter sensor entry."""
+    name: str = entry.options[CONF_NAME]
+    entity_id: str = entry.options[CONF_ENTITY_ID]
+
+    filter_config = {
+        k: v for k, v in entry.options.items() if k not in (CONF_NAME, CONF_ENTITY_ID)
+    }
+    if CONF_FILTER_WINDOW_SIZE in filter_config and isinstance(
+        filter_config[CONF_FILTER_WINDOW_SIZE], dict
+    ):
+        filter_config[CONF_FILTER_WINDOW_SIZE] = timedelta(
+            **filter_config[CONF_FILTER_WINDOW_SIZE]
+        )
+
+    filters = [
+        FILTERS[filter_config.pop(CONF_FILTER_NAME)](entity=entity_id, **filter_config)
+    ]
+
+    async_add_entities([SensorFilter(name, entry.entry_id, entity_id, filters)])
+
+
 class SensorFilter(SensorEntity):
     """Representation of a Filter Sensor."""
 
@@ -218,10 +252,12 @@ class SensorFilter(SensorEntity):
         self._attr_extra_state_attributes = {ATTR_ENTITY_ID: entity_id}
 
     @callback
-    def _update_filter_sensor_state_event(self, event: Event) -> None:
+    def _update_filter_sensor_state_event(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
         """Handle device state changes."""
         _LOGGER.debug("Update filter on event: %s", event)
-        self._update_filter_sensor_state(event.data.get("new_state"))
+        self._update_filter_sensor_state(event.data["new_state"])
 
     @callback
     def _update_filter_sensor_state(
@@ -273,22 +309,15 @@ class SensorFilter(SensorEntity):
 
         self._state = temp_state.state
 
-        if self._attr_icon is None:
-            self._attr_icon = new_state.attributes.get(ATTR_ICON, ICON)
+        self._attr_icon = new_state.attributes.get(ATTR_ICON, ICON)
+        self._attr_device_class = new_state.attributes.get(ATTR_DEVICE_CLASS)
+        self._attr_state_class = new_state.attributes.get(ATTR_STATE_CLASS)
 
-        if (
-            self._attr_device_class is None
-            and new_state.attributes.get(ATTR_DEVICE_CLASS) in SENSOR_DEVICE_CLASSES
+        if self._attr_native_unit_of_measurement != new_state.attributes.get(
+            ATTR_UNIT_OF_MEASUREMENT
         ):
-            self._attr_device_class = new_state.attributes.get(ATTR_DEVICE_CLASS)
-
-        if (
-            self._attr_state_class is None
-            and new_state.attributes.get(ATTR_STATE_CLASS) in SENSOR_STATE_CLASSES
-        ):
-            self._attr_state_class = new_state.attributes.get(ATTR_STATE_CLASS)
-
-        if self._attr_native_unit_of_measurement is None:
+            for filt in self._filters:
+                filt.reset()
             self._attr_native_unit_of_measurement = new_state.attributes.get(
                 ATTR_UNIT_OF_MEASUREMENT
             )
@@ -360,11 +389,16 @@ class SensorFilter(SensorEntity):
                 if state.state not in [STATE_UNKNOWN, STATE_UNAVAILABLE, None]:
                     self._update_filter_sensor_state(state, False)
 
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._entity], self._update_filter_sensor_state_event
+        @callback
+        def _async_hass_started(hass: HomeAssistant) -> None:
+            """Delay source entity tracking."""
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._entity], self._update_filter_sensor_state_event
+                )
             )
-        )
+
+        self.async_on_remove(async_at_started(self.hass, _async_hass_started))
 
     @property
     def native_value(self) -> datetime | StateType:
@@ -460,9 +494,13 @@ class Filter:
         """Return whether the current filter_state should be skipped."""
         return self._skip_processing
 
+    def reset(self) -> None:
+        """Reset filter."""
+        self.states.clear()
+
     def _filter_state(self, new_state: FilterState) -> FilterState:
         """Implement filter."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def filter_state(self, new_state: _State) -> _State:
         """Implement a common interface for filters."""

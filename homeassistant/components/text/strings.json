@@ -1,8 +1,10 @@
 {
-  "title": "Text",
   "device_automation": {
     "action_type": {
       "set_value": "Set value for {entity_name}"
+    },
+    "extra_fields": {
+      "value": "[%key:common::device_automation::extra_fields::value%]"
     }
   },
   "entity_component": {
@@ -16,16 +18,35 @@
           "name": "Min length"
         },
         "mode": {
-          "name": "Mode",
+          "name": "[%key:common::config_flow::data::mode%]",
           "state": {
-            "text": "Text",
-            "password": "Password"
+            "password": "[%key:common::config_flow::data::password%]",
+            "text": "Text"
           }
         },
         "pattern": {
           "name": "Pattern"
         }
       }
+    }
+  },
+  "services": {
+    "set_value": {
+      "description": "Sets the value.",
+      "fields": {
+        "value": {
+          "description": "Enter your text.",
+          "name": "Value"
+        }
+      },
+      "name": "Set value"
+    }
+  },
+  "title": "Text",
+  "triggers": {
+    "changed": {
+      "description": "Triggers after one or more texts change.",
+      "name": "Text changed"
     }
   }
 }

@@ -1,12 +1,22 @@
 """Data template classes for discovery used to generate additional data for setup."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 import logging
 from typing import Any, cast
 
 from zwave_js_server.const import CommandClass
+from zwave_js_server.const.command_class.energy_production import (
+    EnergyProductionParameter,
+    EnergyProductionScaleType,
+    PowerScale,
+    TodaysProductionScale,
+    TotalProductionScale,
+    TotalTimeScale,
+)
 from zwave_js_server.const.command_class.meter import (
     CURRENT_METER_TYPES,
     ENERGY_TOTAL_INCREASING_METER_TYPES,
@@ -79,11 +89,14 @@ from zwave_js_server.const.command_class.multilevel_sensor import (
     MultilevelSensorScaleType,
     MultilevelSensorType,
 )
-from zwave_js_server.model.node import Node as ZwaveNode
+from zwave_js_server.exceptions import UnknownValueData
 from zwave_js_server.model.value import (
     ConfigurationValue as ZwaveConfigurationValue,
     Value as ZwaveValue,
-    get_value_id_str,
+)
+from zwave_js_server.util.command_class.energy_production import (
+    get_energy_production_parameter,
+    get_energy_production_scale_type,
 )
 from zwave_js_server.util.command_class.meter import get_meter_scale_type
 from zwave_js_server.util.command_class.multilevel_sensor import (
@@ -118,11 +131,18 @@ from homeassistant.const import (
 )
 
 from .const import (
-    ENTITY_DESC_KEY_BATTERY,
+    ENTITY_DESC_KEY_BATTERY_LEVEL,
+    ENTITY_DESC_KEY_BATTERY_LIST_STATE,
+    ENTITY_DESC_KEY_BATTERY_MAXIMUM_CAPACITY,
+    ENTITY_DESC_KEY_BATTERY_TEMPERATURE,
     ENTITY_DESC_KEY_CO,
     ENTITY_DESC_KEY_CO2,
     ENTITY_DESC_KEY_CURRENT,
     ENTITY_DESC_KEY_ENERGY_MEASUREMENT,
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_POWER,
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TIME,
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TODAY,
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TOTAL,
     ENTITY_DESC_KEY_ENERGY_TOTAL_INCREASING,
     ENTITY_DESC_KEY_HUMIDITY,
     ENTITY_DESC_KEY_ILLUMINANCE,
@@ -134,9 +154,22 @@ from .const import (
     ENTITY_DESC_KEY_TARGET_TEMPERATURE,
     ENTITY_DESC_KEY_TEMPERATURE,
     ENTITY_DESC_KEY_TOTAL_INCREASING,
+    ENTITY_DESC_KEY_UV_INDEX,
     ENTITY_DESC_KEY_VOLTAGE,
 )
-from .helpers import ZwaveValueID
+from .models import BaseDiscoverySchemaDataTemplate, ZwaveValueID
+
+ENERGY_PRODUCTION_DEVICE_CLASS_MAP: dict[str, list[EnergyProductionParameter]] = {
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TIME: [EnergyProductionParameter.TOTAL_TIME],
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TODAY: [
+        EnergyProductionParameter.TODAYS_PRODUCTION
+    ],
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_TOTAL: [
+        EnergyProductionParameter.TOTAL_PRODUCTION
+    ],
+    ENTITY_DESC_KEY_ENERGY_PRODUCTION_POWER: [EnergyProductionParameter.POWER],
+}
+
 
 METER_DEVICE_CLASS_MAP: dict[str, list[MeterScaleType]] = {
     ENTITY_DESC_KEY_CURRENT: CURRENT_METER_TYPES,
@@ -158,6 +191,17 @@ MULTILEVEL_SENSOR_DEVICE_CLASS_MAP: dict[str, list[MultilevelSensorType]] = {
     ENTITY_DESC_KEY_SIGNAL_STRENGTH: SIGNAL_STRENGTH_SENSORS,
     ENTITY_DESC_KEY_TEMPERATURE: TEMPERATURE_SENSORS,
     ENTITY_DESC_KEY_VOLTAGE: VOLTAGE_SENSORS,
+    ENTITY_DESC_KEY_UV_INDEX: [MultilevelSensorType.ULTRAVIOLET],
+}
+
+ENERGY_PRODUCTION_UNIT_MAP: dict[str, list[EnergyProductionScaleType]] = {
+    UnitOfEnergy.WATT_HOUR: [
+        TotalProductionScale.WATT_HOURS,
+        TodaysProductionScale.WATT_HOURS,
+    ],
+    UnitOfPower.WATT: [PowerScale.WATTS],
+    UnitOfTime.SECONDS: [TotalTimeScale.SECONDS],
+    UnitOfTime.HOURS: [TotalTimeScale.HOURS],
 }
 
 METER_UNIT_MAP: dict[str, list[MeterScaleType]] = {
@@ -219,49 +263,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class BaseDiscoverySchemaDataTemplate:
-    """Base class for discovery schema data templates."""
-
-    static_data: Any | None = None
-
-    def resolve_data(self, value: ZwaveValue) -> Any:
-        """Resolve helper class data for a discovered value.
-
-        Can optionally be implemented by subclasses if input data needs to be
-        transformed once discovered Value is available.
-        """
-        return {}
-
-    def values_to_watch(self, resolved_data: Any) -> Iterable[ZwaveValue | None]:
-        """Return list of all ZwaveValues resolved by helper that should be watched.
-
-        Should be implemented by subclasses only if there are values to watch.
-        """
-        return []
-
-    def value_ids_to_watch(self, resolved_data: Any) -> set[str]:
-        """Return list of all Value IDs resolved by helper that should be watched.
-
-        Not to be overwritten by subclasses.
-        """
-        return {val.value_id for val in self.values_to_watch(resolved_data) if val}
-
-    @staticmethod
-    def _get_value_from_id(
-        node: ZwaveNode, value_id_obj: ZwaveValueID
-    ) -> ZwaveValue | ZwaveConfigurationValue | None:
-        """Get a ZwaveValue from a node using a ZwaveValueDict."""
-        value_id = get_value_id_str(
-            node,
-            value_id_obj.command_class,
-            value_id_obj.property_,
-            endpoint=value_id_obj.endpoint,
-            property_key=value_id_obj.property_key,
-        )
-        return node.values.get(value_id)
-
-
-@dataclass
 class DynamicCurrentTempClimateDataTemplate(BaseDiscoverySchemaDataTemplate):
     """Data template class for Z-Wave JS Climate entities with dynamic current temps."""
 
@@ -319,14 +320,8 @@ class NumericSensorDataTemplate(BaseDiscoverySchemaDataTemplate):
     """Data template class for Z-Wave Sensor entities."""
 
     @staticmethod
-    def find_key_from_matching_set(
-        enum_value: MultilevelSensorType | MultilevelSensorScaleType | MeterScaleType,
-        set_map: Mapping[
-            str,
-            list[MultilevelSensorType]
-            | list[MultilevelSensorScaleType]
-            | list[MeterScaleType],
-        ],
+    def find_key_from_matching_set[_T: Enum](
+        enum_value: _T, set_map: Mapping[str, list[_T]]
     ) -> str | None:
         """Find a key in a set map that matches a given enum value."""
         for key, value_set in set_map.items():
@@ -343,11 +338,38 @@ class NumericSensorDataTemplate(BaseDiscoverySchemaDataTemplate):
     def resolve_data(self, value: ZwaveValue) -> NumericSensorDataTemplateData:
         """Resolve helper class data for a discovered value."""
 
-        if value.command_class == CommandClass.BATTERY:
-            return NumericSensorDataTemplateData(ENTITY_DESC_KEY_BATTERY, PERCENTAGE)
+        if value.command_class == CommandClass.BATTERY and value.property_ == "level":
+            return NumericSensorDataTemplateData(
+                ENTITY_DESC_KEY_BATTERY_LEVEL, PERCENTAGE
+            )
+        if value.command_class == CommandClass.BATTERY and value.property_ in (
+            "chargingStatus",
+            "rechargeOrReplace",
+        ):
+            return NumericSensorDataTemplateData(
+                ENTITY_DESC_KEY_BATTERY_LIST_STATE, None
+            )
+        if (
+            value.command_class == CommandClass.BATTERY
+            and value.property_ == "maximumCapacity"
+        ):
+            return NumericSensorDataTemplateData(
+                ENTITY_DESC_KEY_BATTERY_MAXIMUM_CAPACITY, PERCENTAGE
+            )
+        if (
+            value.command_class == CommandClass.BATTERY
+            and value.property_ == "temperature"
+        ):
+            return NumericSensorDataTemplateData(
+                ENTITY_DESC_KEY_BATTERY_TEMPERATURE, UnitOfTemperature.CELSIUS
+            )
 
         if value.command_class == CommandClass.METER:
-            meter_scale_type = get_meter_scale_type(value)
+            try:
+                meter_scale_type = get_meter_scale_type(value)
+            except UnknownValueData:
+                return NumericSensorDataTemplateData()
+
             unit = self.find_key_from_matching_set(meter_scale_type, METER_UNIT_MAP)
             # We do this because even though these are energy scales, they don't meet
             # the unit requirements for the energy device class.
@@ -372,8 +394,11 @@ class NumericSensorDataTemplate(BaseDiscoverySchemaDataTemplate):
             )
 
         if value.command_class == CommandClass.SENSOR_MULTILEVEL:
-            sensor_type = get_multilevel_sensor_type(value)
-            multilevel_sensor_scale_type = get_multilevel_sensor_scale_type(value)
+            try:
+                sensor_type = get_multilevel_sensor_type(value)
+                multilevel_sensor_scale_type = get_multilevel_sensor_scale_type(value)
+            except UnknownValueData:
+                return NumericSensorDataTemplateData()
             unit = self.find_key_from_matching_set(
                 multilevel_sensor_scale_type, MULTILEVEL_SENSOR_UNIT_MAP
             )
@@ -387,36 +412,63 @@ class NumericSensorDataTemplate(BaseDiscoverySchemaDataTemplate):
             if key:
                 return NumericSensorDataTemplateData(key, unit)
 
+        if value.command_class == CommandClass.ENERGY_PRODUCTION:
+            energy_production_parameter = get_energy_production_parameter(value)
+            energy_production_scale_type = get_energy_production_scale_type(value)
+            unit = self.find_key_from_matching_set(
+                energy_production_scale_type, ENERGY_PRODUCTION_UNIT_MAP
+            )
+            key = self.find_key_from_matching_set(
+                energy_production_parameter, ENERGY_PRODUCTION_DEVICE_CLASS_MAP
+            )
+            if key:
+                return NumericSensorDataTemplateData(key, unit)
+
         return NumericSensorDataTemplateData()
 
 
 @dataclass
 class TiltValueMix:
-    """Mixin data class for the tilt_value."""
+    """Mixin data class for the current_tilt_value and target_tilt_value."""
 
-    tilt_value_id: ZwaveValueID
+    current_tilt_value_id: ZwaveValueID
+    target_tilt_value_id: ZwaveValueID
 
 
 @dataclass
 class CoverTiltDataTemplate(BaseDiscoverySchemaDataTemplate, TiltValueMix):
     """Tilt data template class for Z-Wave Cover entities."""
 
-    def resolve_data(self, value: ZwaveValue) -> dict[str, ZwaveValue | None]:
+    def resolve_data(self, value: ZwaveValue) -> dict[str, ZwaveValue]:
         """Resolve helper class data for a discovered value."""
-        return {"tilt_value": self._get_value_from_id(value.node, self.tilt_value_id)}
+        current_tilt_value = self._get_value_from_id(
+            value.node, self.current_tilt_value_id
+        )
+        assert current_tilt_value
+        target_tilt_value = self._get_value_from_id(
+            value.node, self.target_tilt_value_id
+        )
+        assert target_tilt_value
+        return {
+            "current_tilt_value": current_tilt_value,
+            "target_tilt_value": target_tilt_value,
+        }
 
     def values_to_watch(
         self, resolved_data: dict[str, Any]
     ) -> Iterable[ZwaveValue | None]:
         """Return list of all ZwaveValues resolved by helper that should be watched."""
-        return [resolved_data["tilt_value"]]
+        return [resolved_data["current_tilt_value"], resolved_data["target_tilt_value"]]
 
     @staticmethod
-    def current_tilt_value(
-        resolved_data: dict[str, ZwaveValue | None]
-    ) -> ZwaveValue | None:
+    def current_tilt_value(resolved_data: dict[str, ZwaveValue]) -> ZwaveValue:
         """Get current tilt ZwaveValue from resolved data."""
-        return resolved_data["tilt_value"]
+        return resolved_data["current_tilt_value"]
+
+    @staticmethod
+    def target_tilt_value(resolved_data: dict[str, ZwaveValue]) -> ZwaveValue:
+        """Get target tilt ZwaveValue from resolved data."""
+        return resolved_data["target_tilt_value"]
 
 
 @dataclass
@@ -485,6 +537,7 @@ class ConfigurableFanValueMappingDataTemplate(
 
     `configuration_value_to_fan_value_mapping` maps the values from
     `configuration_option` to the value mapping object.
+
     """
 
     def resolve_data(
@@ -555,6 +608,7 @@ class FixedFanValueMappingDataTemplate(
               )
           ),
       ),
+
     """
 
     def get_fan_value_mapping(

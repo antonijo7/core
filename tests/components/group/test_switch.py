@@ -1,7 +1,9 @@
 """The tests for the Group Switch platform."""
+
+import asyncio
 from unittest.mock import patch
 
-import async_timeout
+import pytest
 
 from homeassistant import config as hass_config
 from homeassistant.components.group import DOMAIN, SERVICE_RELOAD
@@ -12,6 +14,7 @@ from homeassistant.components.switch import (
     SERVICE_TURN_ON,
 )
 from homeassistant.const import (
+    ATTR_ASSUMED_STATE,
     ATTR_ENTITY_ID,
     STATE_OFF,
     STATE_ON,
@@ -25,7 +28,9 @@ from homeassistant.setup import async_setup_component
 from tests.common import get_fixture_path
 
 
-async def test_default_state(hass: HomeAssistant) -> None:
+async def test_default_state(
+    hass: HomeAssistant, entity_registry: er.EntityRegistry
+) -> None:
     """Test switch group default state."""
     hass.states.async_set("switch.tv", "on")
     await async_setup_component(
@@ -50,7 +55,6 @@ async def test_default_state(hass: HomeAssistant) -> None:
     assert state.state == STATE_ON
     assert state.attributes.get(ATTR_ENTITY_ID) == ["switch.tv", "switch.soundbar"]
 
-    entity_registry = er.async_get(hass)
     entry = entity_registry.async_get("switch.multimedia_group")
     assert entry
     assert entry.unique_id == "unique_identifier"
@@ -231,9 +235,8 @@ async def test_state_reporting_all(hass: HomeAssistant) -> None:
     assert hass.states.get("switch.switch_group").state == STATE_UNAVAILABLE
 
 
-async def test_service_calls(
-    hass: HomeAssistant, enable_custom_integrations: None
-) -> None:
+@pytest.mark.usefixtures("enable_custom_integrations")
+async def test_service_calls(hass: HomeAssistant) -> None:
     """Test service calls."""
     await async_setup_component(
         hass,
@@ -445,7 +448,7 @@ async def test_nested_group(hass: HomeAssistant) -> None:
     assert state.attributes.get(ATTR_ENTITY_ID) == ["switch.some_group"]
 
     # Test controlling the nested group
-    async with async_timeout.timeout(0.5):
+    async with asyncio.timeout(0.5):
         await hass.services.async_call(
             SWITCH_DOMAIN,
             SERVICE_TOGGLE,
@@ -456,3 +459,43 @@ async def test_nested_group(hass: HomeAssistant) -> None:
     assert hass.states.get("switch.decorative_lights").state == STATE_OFF
     assert hass.states.get("switch.some_group").state == STATE_OFF
     assert hass.states.get("switch.nested_group").state == STATE_OFF
+
+
+async def test_assumed_state(hass: HomeAssistant) -> None:
+    """Test assumed_state attribute behavior."""
+    await async_setup_component(
+        hass,
+        SWITCH_DOMAIN,
+        {
+            SWITCH_DOMAIN: {
+                "platform": DOMAIN,
+                "entities": ["switch.tv", "switch.soundbar"],
+                "name": "Media Group",
+            }
+        },
+    )
+    await hass.async_block_till_done()
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    # No members with assumed_state -> group doesn't have assumed_state in attributes
+    hass.states.async_set("switch.tv", STATE_ON, {})
+    hass.states.async_set("switch.soundbar", STATE_OFF, {})
+    await hass.async_block_till_done()
+
+    state = hass.states.get("switch.media_group")
+    assert ATTR_ASSUMED_STATE not in state.attributes
+
+    # One member with assumed_state=True -> group has assumed_state=True
+    hass.states.async_set("switch.tv", STATE_ON, {ATTR_ASSUMED_STATE: True})
+    await hass.async_block_till_done()
+
+    state = hass.states.get("switch.media_group")
+    assert state.attributes.get(ATTR_ASSUMED_STATE) is True
+
+    # All members without assumed_state -> group doesn't have assumed_state in attributes
+    hass.states.async_set("switch.tv", STATE_ON, {})
+    await hass.async_block_till_done()
+
+    state = hass.states.get("switch.media_group")
+    assert ATTR_ASSUMED_STATE not in state.attributes

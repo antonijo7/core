@@ -117,9 +117,7 @@ def _get_neighbours(ndb: NDB) -> dict[str, Neighbour]:
 def _get_routes_and_neighbors():
     """Get the routes and neighbours from pyroute2."""
     # Import in the executor since import NDB can take a while
-    from pyroute2 import (  # pylint: disable=no-name-in-module, import-outside-toplevel
-        NDB,
-    )
+    from pyroute2 import NDB  # pylint: disable=no-name-in-module  # noqa: PLC0415
 
     with NDB() as ndb:
         routes, reverse_routes = _get_possible_thread_routes(ndb)
@@ -148,7 +146,8 @@ async def async_get_config_entry_diagnostics(
                 "unexpected_routers": set(),
             },
         )
-        if mlp := record.dataset.get(MeshcopTLVType.MESHLOCALPREFIX):
+        if mlp_item := record.dataset.get(MeshcopTLVType.MESHLOCALPREFIX):
+            mlp = str(mlp_item)
             network["prefixes"].add(f"{mlp[0:4]}:{mlp[4:8]}:{mlp[8:12]}:{mlp[12:16]}")
 
     # Find all routes currently act that might be thread related, so we can match them to

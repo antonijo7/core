@@ -1,5 +1,6 @@
 """The tests for Z-Wave JS automation triggers."""
-from unittest.mock import AsyncMock, patch
+
+from unittest.mock import patch
 
 import pytest
 import voluptuous as vol
@@ -10,13 +11,13 @@ from zwave_js_server.model.node import Node
 from homeassistant.components import automation
 from homeassistant.components.zwave_js import DOMAIN
 from homeassistant.components.zwave_js.helpers import get_device_id
-from homeassistant.components.zwave_js.trigger import async_validate_trigger_config
+from homeassistant.components.zwave_js.trigger import TRIGGERS
 from homeassistant.components.zwave_js.triggers.trigger_helpers import (
     async_bypass_dynamic_config_validation,
 )
 from homeassistant.const import SERVICE_RELOAD
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import async_get as async_get_dev_reg
+from homeassistant.helpers import device_registry as dr
 from homeassistant.setup import async_setup_component
 
 from .common import SCHLAGE_BE469_LOCK_ENTITY
@@ -25,14 +26,17 @@ from tests.common import async_capture_events
 
 
 async def test_zwave_js_value_updated(
-    hass: HomeAssistant, client, lock_schlage_be469, integration
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    client,
+    lock_schlage_be469,
+    integration,
 ) -> None:
     """Test for zwave_js.value_updated automation trigger."""
     trigger_type = f"{DOMAIN}.value_updated"
     node: Node = lock_schlage_be469
-    dev_reg = async_get_dev_reg(hass)
-    device = dev_reg.async_get_device(
-        {get_device_id(client.driver, lock_schlage_be469)}
+    device = device_registry.async_get_device(
+        identifiers={get_device_id(client.driver, lock_schlage_be469)}
     )
     assert device
 
@@ -61,9 +65,11 @@ async def test_zwave_js_value_updated(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "latchStatus",
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                        },
                     },
                     "action": {
                         "event": "no_value_filter",
@@ -73,10 +79,12 @@ async def test_zwave_js_value_updated(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "device_id": device.id,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "latchStatus",
-                        "from": "ajar",
+                        "options": {
+                            "device_id": device.id,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                            "from": "ajar",
+                        },
                     },
                     "action": {
                         "event": "single_from_value_filter",
@@ -86,10 +94,12 @@ async def test_zwave_js_value_updated(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "latchStatus",
-                        "from": ["closed", "opened"],
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                            "from": ["closed", "opened"],
+                        },
                     },
                     "action": {
                         "event": "multiple_from_value_filters",
@@ -99,11 +109,13 @@ async def test_zwave_js_value_updated(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "latchStatus",
-                        "from": ["closed", "opened"],
-                        "to": ["opened"],
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                            "from": ["closed", "opened"],
+                            "to": ["opened"],
+                        },
                     },
                     "action": {
                         "event": "from_and_to_value_filters",
@@ -113,9 +125,11 @@ async def test_zwave_js_value_updated(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "boltStatus",
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "boltStatus",
+                        },
                     },
                     "action": {
                         "event": "different_value",
@@ -269,7 +283,7 @@ async def test_zwave_js_value_updated(
 
     clear_events()
 
-    with patch("homeassistant.config.load_yaml", return_value={}):
+    with patch("homeassistant.config.load_yaml_dict", return_value={}):
         await hass.services.async_call(automation.DOMAIN, SERVICE_RELOAD, blocking=True)
 
 
@@ -295,9 +309,11 @@ async def test_zwave_js_value_updated_bypass_dynamic_validation(
                     {
                         "trigger": {
                             "platform": trigger_type,
-                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                            "command_class": CommandClass.DOOR_LOCK.value,
-                            "property": "latchStatus",
+                            "options": {
+                                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                                "command_class": CommandClass.DOOR_LOCK.value,
+                                "property": "latchStatus",
+                            },
                         },
                         "action": {
                             "event": "no_value_filter",
@@ -353,9 +369,11 @@ async def test_zwave_js_value_updated_bypass_dynamic_validation_no_nodes(
                     {
                         "trigger": {
                             "platform": trigger_type,
-                            "entity_id": "sensor.test",
-                            "command_class": CommandClass.DOOR_LOCK.value,
-                            "property": "latchStatus",
+                            "options": {
+                                "entity_id": "sensor.test",
+                                "command_class": CommandClass.DOOR_LOCK.value,
+                                "property": "latchStatus",
+                            },
                         },
                         "action": {
                             "event": "no_value_filter",
@@ -409,9 +427,11 @@ async def test_zwave_js_value_updated_bypass_dynamic_validation_no_driver(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "command_class": CommandClass.DOOR_LOCK.value,
-                        "property": "latchStatus",
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                        },
                     },
                     "action": {
                         "event": "no_value_filter",
@@ -449,14 +469,17 @@ async def test_zwave_js_value_updated_bypass_dynamic_validation_no_driver(
 
 
 async def test_zwave_js_event(
-    hass: HomeAssistant, client, lock_schlage_be469, integration
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    client,
+    lock_schlage_be469,
+    integration,
 ) -> None:
     """Test for zwave_js.event automation trigger."""
     trigger_type = f"{DOMAIN}.event"
     node: Node = lock_schlage_be469
-    dev_reg = async_get_dev_reg(hass)
-    device = dev_reg.async_get_device(
-        {get_device_id(client.driver, lock_schlage_be469)}
+    device = device_registry.async_get_device(
+        identifiers={get_device_id(client.driver, lock_schlage_be469)}
     )
     assert device
 
@@ -499,9 +522,11 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "event_source": "node",
-                        "event": "interview stage completed",
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "event_source": "node",
+                            "event": "interview stage completed",
+                        },
                     },
                     "action": {
                         "event": "node_no_event_data_filter",
@@ -511,10 +536,12 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "device_id": device.id,
-                        "event_source": "node",
-                        "event": "interview stage completed",
-                        "event_data": {"stageName": "ProtocolInfo"},
+                        "options": {
+                            "device_id": device.id,
+                            "event_source": "node",
+                            "event": "interview stage completed",
+                            "event_data": {"stageName": "ProtocolInfo"},
+                        },
                     },
                     "action": {
                         "event": "node_event_data_filter",
@@ -524,9 +551,11 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "config_entry_id": integration.entry_id,
-                        "event_source": "controller",
-                        "event": "inclusion started",
+                        "options": {
+                            "config_entry_id": integration.entry_id,
+                            "event_source": "controller",
+                            "event": "inclusion started",
+                        },
                     },
                     "action": {
                         "event": "controller_no_event_data_filter",
@@ -536,10 +565,12 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "config_entry_id": integration.entry_id,
-                        "event_source": "controller",
-                        "event": "inclusion started",
-                        "event_data": {"secure": True},
+                        "options": {
+                            "config_entry_id": integration.entry_id,
+                            "event_source": "controller",
+                            "event": "inclusion started",
+                            "event_data": {"strategy": 0},
+                        },
                     },
                     "action": {
                         "event": "controller_event_data_filter",
@@ -549,9 +580,11 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "config_entry_id": integration.entry_id,
-                        "event_source": "driver",
-                        "event": "logging",
+                        "options": {
+                            "config_entry_id": integration.entry_id,
+                            "event_source": "driver",
+                            "event": "logging",
+                        },
                     },
                     "action": {
                         "event": "driver_no_event_data_filter",
@@ -561,10 +594,12 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "config_entry_id": integration.entry_id,
-                        "event_source": "driver",
-                        "event": "logging",
-                        "event_data": {"message": "test"},
+                        "options": {
+                            "config_entry_id": integration.entry_id,
+                            "event_source": "driver",
+                            "event": "logging",
+                            "event_data": {"message": "test"},
+                        },
                     },
                     "action": {
                         "event": "driver_event_data_filter",
@@ -574,10 +609,12 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "event_source": "node",
-                        "event": "value updated",
-                        "event_data": {"args": {"commandClassName": "Door Lock"}},
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "event_source": "node",
+                            "event": "value updated",
+                            "event_data": {"args": {"commandClassName": "Door Lock"}},
+                        },
                     },
                     "action": {
                         "event": "node_event_data_no_partial_dict_match_filter",
@@ -587,11 +624,13 @@ async def test_zwave_js_event(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                        "event_source": "node",
-                        "event": "value updated",
-                        "event_data": {"args": {"commandClassName": "Door Lock"}},
-                        "partial_dict_match": True,
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "event_source": "node",
+                            "event": "value updated",
+                            "event_data": {"args": {"commandClassName": "Door Lock"}},
+                            "partial_dict_match": True,
+                        },
                     },
                     "action": {
                         "event": "node_event_data_partial_dict_match_filter",
@@ -657,7 +696,7 @@ async def test_zwave_js_event(
         data={
             "source": "controller",
             "event": "inclusion started",
-            "secure": False,
+            "strategy": 2,
         },
     )
     client.driver.controller.receive_event(event)
@@ -681,7 +720,7 @@ async def test_zwave_js_event(
         data={
             "source": "controller",
             "event": "inclusion started",
-            "secure": True,
+            "strategy": 0,
         },
     )
     client.driver.controller.receive_event(event)
@@ -831,7 +870,7 @@ async def test_zwave_js_event(
 
     clear_events()
 
-    with patch("homeassistant.config.load_yaml", return_value={}):
+    with patch("homeassistant.config.load_yaml_dict", return_value={}):
         await hass.services.async_call(automation.DOMAIN, SERVICE_RELOAD, blocking=True)
 
 
@@ -857,9 +896,11 @@ async def test_zwave_js_event_bypass_dynamic_validation(
                     {
                         "trigger": {
                             "platform": trigger_type,
-                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-                            "event_source": "node",
-                            "event": "interview stage completed",
+                            "options": {
+                                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                                "event_source": "node",
+                                "event": "interview stage completed",
+                            },
                         },
                         "action": {
                             "event": "node_no_event_data_filter",
@@ -908,9 +949,11 @@ async def test_zwave_js_event_bypass_dynamic_validation_no_nodes(
                     {
                         "trigger": {
                             "platform": trigger_type,
-                            "entity_id": "sensor.fake",
-                            "event_source": "node",
-                            "event": "interview stage completed",
+                            "options": {
+                                "entity_id": "sensor.fake",
+                                "event_source": "node",
+                                "event": "interview stage completed",
+                            },
                         },
                         "action": {
                             "event": "node_no_event_data_filter",
@@ -951,9 +994,11 @@ async def test_zwave_js_event_invalid_config_entry_id(
                 {
                     "trigger": {
                         "platform": trigger_type,
-                        "config_entry_id": "not_real_entry_id",
-                        "event_source": "controller",
-                        "event": "inclusion started",
+                        "options": {
+                            "config_entry_id": "not_real_entry_id",
+                            "event_source": "controller",
+                            "event": "inclusion started",
+                        },
                     },
                     "action": {
                         "event": "node_no_event_data_filter",
@@ -967,50 +1012,45 @@ async def test_zwave_js_event_invalid_config_entry_id(
     caplog.clear()
 
 
-async def test_async_validate_trigger_config(hass: HomeAssistant) -> None:
-    """Test async_validate_trigger_config."""
-    mock_platform = AsyncMock()
-    with patch(
-        "homeassistant.components.zwave_js.trigger._get_trigger_platform",
-        return_value=mock_platform,
-    ):
-        mock_platform.async_validate_trigger_config.return_value = {}
-        await async_validate_trigger_config(hass, {})
-        mock_platform.async_validate_trigger_config.assert_awaited()
-
-
 async def test_invalid_trigger_configs(hass: HomeAssistant) -> None:
     """Test invalid trigger configs."""
     with pytest.raises(vol.Invalid):
-        await async_validate_trigger_config(
+        await TRIGGERS["event"].async_validate_complete_config(
             hass,
             {
                 "platform": f"{DOMAIN}.event",
-                "entity_id": "fake.entity",
-                "event_source": "node",
-                "event": "value updated",
+                "options": {
+                    "entity_id": "fake.entity",
+                    "event_source": "node",
+                    "event": "value updated",
+                },
             },
         )
 
     with pytest.raises(vol.Invalid):
-        await async_validate_trigger_config(
+        await TRIGGERS["value_updated"].async_validate_complete_config(
             hass,
             {
                 "platform": f"{DOMAIN}.value_updated",
-                "entity_id": "fake.entity",
-                "command_class": CommandClass.DOOR_LOCK.value,
-                "property": "latchStatus",
+                "options": {
+                    "entity_id": "fake.entity",
+                    "command_class": CommandClass.DOOR_LOCK.value,
+                    "property": "latchStatus",
+                },
             },
         )
 
 
 async def test_zwave_js_trigger_config_entry_unloaded(
-    hass: HomeAssistant, client, lock_schlage_be469, integration
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    client,
+    lock_schlage_be469,
+    integration,
 ) -> None:
     """Test zwave_js triggers bypass dynamic validation when needed."""
-    dev_reg = async_get_dev_reg(hass)
-    device = dev_reg.async_get_device(
-        {get_device_id(client.driver, lock_schlage_be469)}
+    device = device_registry.async_get_device(
+        identifiers={get_device_id(client.driver, lock_schlage_be469)}
     )
     assert device
 
@@ -1019,32 +1059,38 @@ async def test_zwave_js_trigger_config_entry_unloaded(
         hass,
         {
             "platform": f"{DOMAIN}.value_updated",
-            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-            "command_class": CommandClass.DOOR_LOCK.value,
-            "property": "latchStatus",
+            "options": {
+                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                "command_class": CommandClass.DOOR_LOCK.value,
+                "property": "latchStatus",
+            },
         },
     )
 
     await hass.config_entries.async_unload(integration.entry_id)
 
     # Test full validation for both events
-    assert await async_validate_trigger_config(
+    assert await TRIGGERS["value_updated"].async_validate_complete_config(
         hass,
         {
             "platform": f"{DOMAIN}.value_updated",
-            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-            "command_class": CommandClass.DOOR_LOCK.value,
-            "property": "latchStatus",
+            "options": {
+                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                "command_class": CommandClass.DOOR_LOCK.value,
+                "property": "latchStatus",
+            },
         },
     )
 
-    assert await async_validate_trigger_config(
+    assert await TRIGGERS["event"].async_validate_complete_config(
         hass,
         {
             "platform": f"{DOMAIN}.event",
-            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-            "event_source": "node",
-            "event": "interview stage completed",
+            "options": {
+                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                "event_source": "node",
+                "event": "interview stage completed",
+            },
         },
     )
 
@@ -1053,9 +1099,11 @@ async def test_zwave_js_trigger_config_entry_unloaded(
         hass,
         {
             "platform": f"{DOMAIN}.value_updated",
-            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-            "command_class": CommandClass.DOOR_LOCK.value,
-            "property": "latchStatus",
+            "options": {
+                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                "command_class": CommandClass.DOOR_LOCK.value,
+                "property": "latchStatus",
+            },
         },
     )
 
@@ -1063,10 +1111,12 @@ async def test_zwave_js_trigger_config_entry_unloaded(
         hass,
         {
             "platform": f"{DOMAIN}.value_updated",
-            "device_id": device.id,
-            "command_class": CommandClass.DOOR_LOCK.value,
-            "property": "latchStatus",
-            "from": "ajar",
+            "options": {
+                "device_id": device.id,
+                "command_class": CommandClass.DOOR_LOCK.value,
+                "property": "latchStatus",
+                "from": "ajar",
+            },
         },
     )
 
@@ -1074,29 +1124,274 @@ async def test_zwave_js_trigger_config_entry_unloaded(
         hass,
         {
             "platform": f"{DOMAIN}.event",
-            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
-            "event_source": "node",
+            "options": {
+                "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                "event_source": "node",
+                "event": "interview stage completed",
+            },
+        },
+    )
+
+    assert async_bypass_dynamic_config_validation(
+        hass,
+        {
+            "platform": f"{DOMAIN}.event",
+            "options": {
+                "device_id": device.id,
+                "event_source": "node",
+                "event": "interview stage completed",
+                "event_data": {"stageName": "ProtocolInfo"},
+            },
+        },
+    )
+
+    assert async_bypass_dynamic_config_validation(
+        hass,
+        {
+            "platform": f"{DOMAIN}.event",
+            "options": {
+                "config_entry_id": integration.entry_id,
+                "event_source": "controller",
+                "event": "nvm convert progress",
+            },
+        },
+    )
+
+
+async def test_server_reconnect_event(
+    hass: HomeAssistant,
+    client,
+    lock_schlage_be469,
+    lock_schlage_be469_state,
+    integration,
+) -> None:
+    """Test that when we reconnect to server, event triggers reattach."""
+    trigger_type = f"{DOMAIN}.event"
+    old_node: Node = lock_schlage_be469
+
+    event_name = "interview stage completed"
+
+    old_node = client.driver.controller.nodes[20]
+
+    original_len = len(old_node._listeners.get(event_name, []))
+
+    assert await async_setup_component(
+        hass,
+        automation.DOMAIN,
+        {
+            automation.DOMAIN: [
+                {
+                    "trigger": {
+                        "platform": trigger_type,
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "event_source": "node",
+                            "event": event_name,
+                        },
+                    },
+                    "action": {
+                        "event": "blah",
+                    },
+                },
+            ]
+        },
+    )
+
+    assert len(old_node._listeners.get(event_name, [])) == original_len + 1
+    old_listener = old_node._listeners.get(event_name, [])[original_len]
+
+    # Remove node so that we can create a new node instance and make sure the listener
+    # attaches
+    node_removed_event = Event(
+        type="node removed",
+        data={
+            "source": "controller",
+            "event": "node removed",
+            "reason": 0,
+            "node": lock_schlage_be469_state,
+        },
+    )
+    client.driver.controller.receive_event(node_removed_event)
+    assert 20 not in client.driver.controller.nodes
+    await hass.async_block_till_done()
+
+    # Add node like new server connection would
+    node_added_event = Event(
+        type="node added",
+        data={
+            "source": "controller",
+            "event": "node added",
+            "node": lock_schlage_be469_state,
+            "result": {},
+        },
+    )
+    client.driver.controller.receive_event(node_added_event)
+    await hass.async_block_till_done()
+
+    # Reload integration to trigger the dispatch signal
+    await hass.config_entries.async_reload(integration.entry_id)
+    await hass.async_block_till_done()
+
+    # Make sure there is a listener added for the trigger to the new node
+    new_node = client.driver.controller.nodes[20]
+    assert len(new_node._listeners.get(event_name, [])) == original_len + 1
+
+    # Make sure the old listener is no longer referenced
+    assert old_listener not in new_node._listeners.get(event_name, [])
+
+
+async def test_server_reconnect_value_updated(
+    hass: HomeAssistant,
+    client,
+    lock_schlage_be469,
+    lock_schlage_be469_state,
+    integration,
+) -> None:
+    """Test that when we reconnect to server, value_updated triggers reattach."""
+    trigger_type = f"{DOMAIN}.value_updated"
+    old_node: Node = lock_schlage_be469
+
+    event_name = "value updated"
+
+    old_node = client.driver.controller.nodes[20]
+
+    original_len = len(old_node._listeners.get(event_name, []))
+
+    assert await async_setup_component(
+        hass,
+        automation.DOMAIN,
+        {
+            automation.DOMAIN: [
+                {
+                    "trigger": {
+                        "platform": trigger_type,
+                        "options": {
+                            "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                            "command_class": CommandClass.DOOR_LOCK.value,
+                            "property": "latchStatus",
+                        },
+                    },
+                    "action": {
+                        "event": "no_value_filter",
+                    },
+                },
+            ]
+        },
+    )
+
+    assert len(old_node._listeners.get(event_name, [])) == original_len + 1
+    old_listener = old_node._listeners.get(event_name, [])[original_len]
+
+    # Remove node so that we can create a new node instance and make sure the listener
+    # attaches
+    node_removed_event = Event(
+        type="node removed",
+        data={
+            "source": "controller",
+            "event": "node removed",
+            "reason": 0,
+            "node": lock_schlage_be469_state,
+        },
+    )
+    client.driver.controller.receive_event(node_removed_event)
+    assert 20 not in client.driver.controller.nodes
+    await hass.async_block_till_done()
+
+    # Add node like new server connection would
+    node_added_event = Event(
+        type="node added",
+        data={
+            "source": "controller",
+            "event": "node added",
+            "node": lock_schlage_be469_state,
+            "result": {},
+        },
+    )
+    client.driver.controller.receive_event(node_added_event)
+    await hass.async_block_till_done()
+
+    # Reload integration to trigger the dispatch signal
+    await hass.config_entries.async_reload(integration.entry_id)
+    await hass.async_block_till_done()
+
+    # Make sure there is a listener added for the trigger to the new node
+    new_node = client.driver.controller.nodes[20]
+    assert len(new_node._listeners.get(event_name, [])) == original_len + 1
+
+    # Make sure the old listener is no longer referenced
+    assert old_listener not in new_node._listeners.get(event_name, [])
+
+
+async def test_zwave_js_old_syntax(
+    hass: HomeAssistant, client, lock_schlage_be469, integration
+) -> None:
+    """Test zwave_js triggers work with the old syntax."""
+    node: Node = lock_schlage_be469
+
+    zwavejs_event = async_capture_events(hass, "zwavejs_event")
+    zwavejs_value_updated = async_capture_events(hass, "zwavejs_value_updated")
+
+    assert await async_setup_component(
+        hass,
+        automation.DOMAIN,
+        {
+            automation.DOMAIN: [
+                {
+                    "trigger": {
+                        "platform": f"{DOMAIN}.value_updated",
+                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                        "command_class": CommandClass.DOOR_LOCK.value,
+                        "property": "latchStatus",
+                    },
+                    "action": {
+                        "event": "zwavejs_event",
+                    },
+                },
+                {
+                    "trigger": {
+                        "platform": f"{DOMAIN}.event",
+                        "entity_id": SCHLAGE_BE469_LOCK_ENTITY,
+                        "event_source": "node",
+                        "event": "interview stage completed",
+                    },
+                    "action": {
+                        "event": "zwavejs_value_updated",
+                    },
+                },
+            ]
+        },
+    )
+
+    event = Event(
+        type="value updated",
+        data={
+            "source": "node",
+            "event": "value updated",
+            "nodeId": node.node_id,
+            "args": {
+                "commandClassName": "Door Lock",
+                "commandClass": 98,
+                "endpoint": 0,
+                "property": "latchStatus",
+                "newValue": "boo",
+                "prevValue": "hiss",
+                "propertyName": "latchStatus",
+            },
+        },
+    )
+    node.receive_event(event)
+    await hass.async_block_till_done()
+    assert len(zwavejs_event) == 1
+
+    event = Event(
+        type="interview stage completed",
+        data={
+            "source": "node",
             "event": "interview stage completed",
+            "stageName": "NodeInfo",
+            "nodeId": node.node_id,
         },
     )
-
-    assert async_bypass_dynamic_config_validation(
-        hass,
-        {
-            "platform": f"{DOMAIN}.event",
-            "device_id": device.id,
-            "event_source": "node",
-            "event": "interview stage completed",
-            "event_data": {"stageName": "ProtocolInfo"},
-        },
-    )
-
-    assert async_bypass_dynamic_config_validation(
-        hass,
-        {
-            "platform": f"{DOMAIN}.event",
-            "config_entry_id": integration.entry_id,
-            "event_source": "controller",
-            "event": "nvm convert progress",
-        },
-    )
+    node.receive_event(event)
+    await hass.async_block_till_done()
+    assert len(zwavejs_value_updated) == 1

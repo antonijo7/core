@@ -1,4 +1,5 @@
 """Tests for Google Mail."""
+
 import http
 import time
 from unittest.mock import patch
@@ -28,8 +29,6 @@ async def test_setup_success(
 
     await hass.config_entries.async_unload(entries[0].entry_id)
     await hass.async_block_till_done()
-
-    assert not hass.services.async_services().get(DOMAIN)
 
 
 @pytest.mark.parametrize("expires_at", [time.time() - 3600], ids=["expired"])
@@ -73,8 +72,13 @@ async def test_expired_token_refresh_success(
             http.HTTPStatus.INTERNAL_SERVER_ERROR,
             ConfigEntryState.SETUP_RETRY,
         ),
+        (
+            time.time() - 3600,
+            http.HTTPStatus.BAD_REQUEST,
+            ConfigEntryState.SETUP_ERROR,
+        ),
     ],
-    ids=["failure_requires_reauth", "transient_failure"],
+    ids=["failure_requires_reauth", "transient_failure", "revoked_auth"],
 )
 async def test_expired_token_refresh_failure(
     hass: HomeAssistant,
@@ -116,14 +120,15 @@ async def test_expired_token_refresh_client_error(
 
 
 async def test_device_info(
-    hass: HomeAssistant, setup_integration: ComponentSetup
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: ComponentSetup,
 ) -> None:
     """Test device info."""
     await setup_integration()
-    device_registry = dr.async_get(hass)
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    device = device_registry.async_get_device({(DOMAIN, entry.entry_id)})
+    device = device_registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
 
     assert device.entry_type is dr.DeviceEntryType.SERVICE
     assert device.identifiers == {(DOMAIN, entry.entry_id)}

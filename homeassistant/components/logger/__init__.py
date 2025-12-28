@@ -1,4 +1,5 @@
 """Support for setting the level of logging for components."""
+
 from __future__ import annotations
 
 import logging
@@ -6,14 +7,14 @@ import re
 
 import voluptuous as vol
 
+from homeassistant.const import EVENT_LOGGING_CHANGED  # noqa: F401
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from . import websocket_api
 from .const import (
     ATTR_LEVEL,
-    DEFAULT_LOGSEVERITY,
     DOMAIN,
     LOGGER_DEFAULT,
     LOGGER_FILTERS,
@@ -22,10 +23,11 @@ from .const import (
     SERVICE_SET_DEFAULT_LEVEL,
     SERVICE_SET_LEVEL,
 )
-from .const import EVENT_LOGGING_CHANGED  # noqa: F401
 from .helpers import (
+    DATA_LOGGER,
     LoggerDomainConfig,
     LoggerSettings,
+    _clear_logger_overwrites,  # noqa: F401
     set_default_log_level,
     set_log_levels,
 )
@@ -39,9 +41,7 @@ CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
-                vol.Optional(
-                    LOGGER_DEFAULT, default=DEFAULT_LOGSEVERITY
-                ): _VALID_LOG_LEVEL,
+                vol.Optional(LOGGER_DEFAULT): _VALID_LOG_LEVEL,
                 vol.Optional(LOGGER_LOGS): vol.Schema({cv.string: _VALID_LOG_LEVEL}),
                 vol.Optional(LOGGER_FILTERS): vol.Schema({cv.string: [cv.is_regex]}),
             }
@@ -56,7 +56,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     settings = LoggerSettings(hass, config)
 
-    domain_config = hass.data[DOMAIN] = LoggerDomainConfig({}, settings)
+    domain_config = hass.data[DATA_LOGGER] = LoggerDomainConfig({}, settings)
     logging.setLoggerClass(_get_logger_class(domain_config.overrides))
 
     websocket_api.async_load_websocket_api(hass)
@@ -129,7 +129,6 @@ def _get_logger_class(hass_overrides: dict[str, int]) -> type[logging.Logger]:
 
             super().setLevel(level)
 
-        # pylint: disable=invalid-name
         def orig_setLevel(self, level: int | str) -> None:
             """Set the log level."""
             super().setLevel(level)

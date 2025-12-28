@@ -6,26 +6,13 @@
     "step": {
       "user": {
         "data": {
-          "location": "[%key:common::config_flow::data::location%]",
-          "area": "Area"
+          "area": "Area",
+          "location": "[%key:common::config_flow::data::location%]"
         },
         "data_description": {
-          "location": "Put marker on location to cover within 5km radius",
-          "area": "If area is selected, any marked location is ignored"
+          "area": "If area is selected, any marked location is ignored",
+          "location": "Put marker on location to cover within 5km radius"
         }
-      }
-    }
-  },
-  "issues": {
-    "deprecated_yaml": {
-      "title": "The Brottsplatskartan YAML configuration is being removed",
-      "description": "Configuring Brottsplatskartan using YAML is being removed.\n\nYour existing YAML configuration has been imported into the UI automatically.\n\nRemove the Brottsplatskartan YAML configuration from your configuration.yaml file and restart Home Assistant to fix this issue."
-    }
-  },
-  "selector": {
-    "areas": {
-      "options": {
-        "none": "No area"
       }
     }
   }

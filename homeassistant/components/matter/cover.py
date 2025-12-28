@@ -1,13 +1,17 @@
 """Matter cover."""
+
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import IntEnum
+from math import floor
 from typing import Any
 
 from chip.clusters import Objects as clusters
 
 from homeassistant.components.cover import (
     ATTR_POSITION,
+    ATTR_TILT_POSITION,
     CoverDeviceClass,
     CoverEntity,
     CoverEntityDescription,
@@ -16,10 +20,10 @@ from homeassistant.components.cover import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import LOGGER
-from .entity import MatterEntity
+from .entity import MatterEntity, MatterEntityDescription
 from .helpers import get_matter
 from .models import MatterDiscoverySchema
 
@@ -28,8 +32,14 @@ OPERATIONAL_STATUS_MASK = 0b11
 
 # map Matter window cover types to HA device class
 TYPE_MAP = {
+    clusters.WindowCovering.Enums.Type.kRollerShade: CoverDeviceClass.SHADE,
+    clusters.WindowCovering.Enums.Type.kRollerShade2Motor: CoverDeviceClass.SHADE,
+    clusters.WindowCovering.Enums.Type.kRollerShadeExterior: CoverDeviceClass.SHADE,
+    clusters.WindowCovering.Enums.Type.kRollerShadeExterior2Motor: CoverDeviceClass.SHADE,
     clusters.WindowCovering.Enums.Type.kAwning: CoverDeviceClass.AWNING,
     clusters.WindowCovering.Enums.Type.kDrapery: CoverDeviceClass.CURTAIN,
+    clusters.WindowCovering.Enums.Type.kTiltBlindTiltOnly: CoverDeviceClass.BLIND,
+    clusters.WindowCovering.Enums.Type.kTiltBlindLiftAndTilt: CoverDeviceClass.BLIND,
 }
 
 
@@ -45,28 +55,36 @@ class OperationalStatus(IntEnum):
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Matter Cover from Config Entry."""
     matter = get_matter(hass)
     matter.register_platform_handler(Platform.COVER, async_add_entities)
 
 
+@dataclass(frozen=True, kw_only=True)
+class MatterCoverEntityDescription(CoverEntityDescription, MatterEntityDescription):
+    """Describe Matter Cover entities."""
+
+
 class MatterCover(MatterEntity, CoverEntity):
     """Representation of a Matter Cover."""
 
-    entity_description: CoverEntityDescription
-    _attr_supported_features = (
-        CoverEntityFeature.OPEN
-        | CoverEntityFeature.CLOSE
-        | CoverEntityFeature.STOP
-        | CoverEntityFeature.SET_POSITION
-    )
+    entity_description: MatterCoverEntityDescription
 
     @property
-    def is_closed(self) -> bool:
-        """Return true if cover is closed, else False."""
-        return self.current_cover_position == 0
+    def is_closed(self) -> bool | None:
+        """Return true if cover is closed, if there is no position report, return None."""
+        if not self._entity_info.endpoint.has_attribute(
+            None, clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths
+        ):
+            return None
+
+        return (
+            self.current_cover_position == 0
+            if self.current_cover_position is not None
+            else None
+        )
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover movement."""
@@ -88,12 +106,12 @@ class MatterCover(MatterEntity, CoverEntity):
             clusters.WindowCovering.Commands.GoToLiftPercentage((100 - position) * 100)
         )
 
-    async def send_device_command(self, command: Any) -> None:
-        """Send device command."""
-        await self.matter_client.send_device_command(
-            node_id=self._endpoint.node.node_id,
-            endpoint_id=self._endpoint.endpoint_id,
-            command=command,
+    async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
+        """Set the cover tilt to a specific position."""
+        position = kwargs[ATTR_TILT_POSITION]
+        await self.send_device_command(
+            # value needs to be inverted and is sent in 100ths
+            clusters.WindowCovering.Commands.GoToTiltPercentage((100 - position) * 100)
         )
 
     @callback
@@ -123,18 +141,45 @@ class MatterCover(MatterEntity, CoverEntity):
                 self._attr_is_opening = False
                 self._attr_is_closing = False
 
-        # current position is inverted in matter (100 is closed, 0 is open)
-        current_cover_position = self.get_matter_attribute_value(
-            clusters.WindowCovering.Attributes.CurrentPositionLiftPercentage
-        )
-        self._attr_current_cover_position = 100 - current_cover_position
+        if self._entity_info.endpoint.has_attribute(
+            None, clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths
+        ):
+            # current position is inverted in matter (100 is closed, 0 is open)
+            current_cover_position = self.get_matter_attribute_value(
+                clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths
+            )
+            self._attr_current_cover_position = (
+                100 - floor(current_cover_position / 100)
+                if current_cover_position is not None
+                else None
+            )
 
-        LOGGER.debug(
-            "Current position for %s - raw: %s - corrected: %s",
-            self.entity_id,
-            current_cover_position,
-            self.current_cover_position,
-        )
+            LOGGER.debug(
+                "Current position for %s - raw: %s - corrected: %s",
+                self.entity_id,
+                current_cover_position,
+                self.current_cover_position,
+            )
+
+        if self._entity_info.endpoint.has_attribute(
+            None, clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths
+        ):
+            # current tilt position is inverted in matter (100 is closed, 0 is open)
+            current_cover_tilt_position = self.get_matter_attribute_value(
+                clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths
+            )
+            self._attr_current_cover_tilt_position = (
+                100 - floor(current_cover_tilt_position / 100)
+                if current_cover_tilt_position is not None
+                else None
+            )
+
+            LOGGER.debug(
+                "Current tilt position for %s - raw: %s - corrected: %s",
+                self.entity_id,
+                current_cover_tilt_position,
+                self.current_cover_tilt_position,
+            )
 
         # map matter type to HA deviceclass
         device_type: clusters.WindowCovering.Enums.Type = (
@@ -142,16 +187,78 @@ class MatterCover(MatterEntity, CoverEntity):
         )
         self._attr_device_class = TYPE_MAP.get(device_type, CoverDeviceClass.AWNING)
 
+        supported_features = (
+            CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
+        )
+        commands = self.get_matter_attribute_value(
+            clusters.WindowCovering.Attributes.AcceptedCommandList
+        )
+        if clusters.WindowCovering.Commands.GoToLiftPercentage.command_id in commands:
+            supported_features |= CoverEntityFeature.SET_POSITION
+        if clusters.WindowCovering.Commands.GoToTiltPercentage.command_id in commands:
+            supported_features |= CoverEntityFeature.SET_TILT_POSITION
+        self._attr_supported_features = supported_features
+
 
 # Discovery schema(s) to map Matter Attributes to HA entities
 DISCOVERY_SCHEMAS = [
     MatterDiscoverySchema(
         platform=Platform.COVER,
-        entity_description=CoverEntityDescription(key="MatterCover"),
+        entity_description=MatterCoverEntityDescription(
+            key="MatterCover",
+            name=None,
+        ),
         entity_class=MatterCover,
         required_attributes=(
-            clusters.WindowCovering.Attributes.CurrentPositionLiftPercentage,
             clusters.WindowCovering.Attributes.OperationalStatus,
+            clusters.WindowCovering.Attributes.Type,
         ),
-    )
+        absent_attributes=(
+            clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths,
+            clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths,
+        ),
+    ),
+    MatterDiscoverySchema(
+        platform=Platform.COVER,
+        entity_description=MatterCoverEntityDescription(
+            key="MatterCoverPositionAwareLift", name=None
+        ),
+        entity_class=MatterCover,
+        required_attributes=(
+            clusters.WindowCovering.Attributes.OperationalStatus,
+            clusters.WindowCovering.Attributes.Type,
+            clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths,
+        ),
+        absent_attributes=(
+            clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths,
+        ),
+    ),
+    MatterDiscoverySchema(
+        platform=Platform.COVER,
+        entity_description=MatterCoverEntityDescription(
+            key="MatterCoverPositionAwareTilt", name=None
+        ),
+        entity_class=MatterCover,
+        required_attributes=(
+            clusters.WindowCovering.Attributes.OperationalStatus,
+            clusters.WindowCovering.Attributes.Type,
+            clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths,
+        ),
+        absent_attributes=(
+            clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths,
+        ),
+    ),
+    MatterDiscoverySchema(
+        platform=Platform.COVER,
+        entity_description=MatterCoverEntityDescription(
+            key="MatterCoverPositionAwareLiftAndTilt", name=None
+        ),
+        entity_class=MatterCover,
+        required_attributes=(
+            clusters.WindowCovering.Attributes.OperationalStatus,
+            clusters.WindowCovering.Attributes.Type,
+            clusters.WindowCovering.Attributes.CurrentPositionLiftPercent100ths,
+            clusters.WindowCovering.Attributes.CurrentPositionTiltPercent100ths,
+        ),
+    ),
 ]

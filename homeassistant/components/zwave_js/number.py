@@ -1,34 +1,36 @@
 """Support for Z-Wave controls using the number platform."""
+
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
-from zwave_js_server.client import Client as ZwaveClient
 from zwave_js_server.const import TARGET_VALUE_PROPERTY
 from zwave_js_server.model.driver import Driver
 from zwave_js_server.model.value import Value
 
 from homeassistant.components.number import DOMAIN as NUMBER_DOMAIN, NumberEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DATA_CLIENT, DOMAIN
+from .const import ATTR_RESERVED_VALUES, DOMAIN
 from .discovery import ZwaveDiscoveryInfo
 from .entity import ZWaveBaseEntity
+from .models import ZwaveJSConfigEntry
 
 PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    config_entry: ZwaveJSConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Z-Wave Number entity from Config Entry."""
-    client: ZwaveClient = hass.data[DOMAIN][config_entry.entry_id][DATA_CLIENT]
+    client = config_entry.runtime_data.client
 
     @callback
     def async_add_number(info: ZwaveDiscoveryInfo) -> None:
@@ -38,6 +40,10 @@ async def async_setup_entry(
         entities: list[ZWaveBaseEntity] = []
         if info.platform_hint == "volume":
             entities.append(ZwaveVolumeNumberEntity(config_entry, driver, info))
+        elif info.platform_hint == "config_parameter":
+            entities.append(
+                ZWaveConfigParameterNumberEntity(config_entry, driver, info)
+            )
         else:
             entities.append(ZwaveNumberEntity(config_entry, driver, info))
         async_add_entities(entities)
@@ -55,7 +61,7 @@ class ZwaveNumberEntity(ZWaveBaseEntity, NumberEntity):
     """Representation of a Z-Wave number entity."""
 
     def __init__(
-        self, config_entry: ConfigEntry, driver: Driver, info: ZwaveDiscoveryInfo
+        self, config_entry: ZwaveJSConfigEntry, driver: Driver, info: ZwaveDiscoveryInfo
     ) -> None:
         """Initialize a ZwaveNumberEntity entity."""
         super().__init__(config_entry, driver, info)
@@ -66,7 +72,9 @@ class ZwaveNumberEntity(ZWaveBaseEntity, NumberEntity):
             self._target_value = self.get_zwave_value(TARGET_VALUE_PROPERTY)
 
         # Entity class attributes
-        self._attr_name = self.generate_name(alternate_value_name=info.platform_hint)
+        self._attr_name = self.generate_name(
+            include_value_name=True, alternate_value_name=info.platform_hint
+        )
 
     @property
     def native_min_value(self) -> float:
@@ -96,14 +104,44 @@ class ZwaveNumberEntity(ZWaveBaseEntity, NumberEntity):
         """Set new value."""
         if (target_value := self._target_value) is None:
             raise HomeAssistantError("Missing target value on device.")
-        await self.info.node.async_set_value(target_value, value)
+        await self._async_set_value(target_value, value)
+
+
+class ZWaveConfigParameterNumberEntity(ZwaveNumberEntity):
+    """Representation of a Z-Wave config parameter number."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, config_entry: ZwaveJSConfigEntry, driver: Driver, info: ZwaveDiscoveryInfo
+    ) -> None:
+        """Initialize a ZWaveConfigParameterNumber entity."""
+        super().__init__(config_entry, driver, info)
+
+        property_key_name = self.info.primary_value.property_key_name
+        # Entity class attributes
+        self._attr_name = self.generate_name(
+            alternate_value_name=self.info.primary_value.property_name,
+            additional_info=[property_key_name] if property_key_name else None,
+        )
+
+    @property
+    def extra_state_attributes(self) -> Mapping[str, Any] | None:
+        """Return extra state attributes for entity."""
+        if not self.info.primary_value.metadata.states:
+            return None
+        return {
+            ATTR_RESERVED_VALUES: {
+                int(k): v for k, v in self.info.primary_value.metadata.states.items()
+            }
+        }
 
 
 class ZwaveVolumeNumberEntity(ZWaveBaseEntity, NumberEntity):
     """Representation of a volume number entity."""
 
     def __init__(
-        self, config_entry: ConfigEntry, driver: Driver, info: ZwaveDiscoveryInfo
+        self, config_entry: ZwaveJSConfigEntry, driver: Driver, info: ZwaveDiscoveryInfo
     ) -> None:
         """Initialize a ZwaveVolumeNumberEntity entity."""
         super().__init__(config_entry, driver, info)
@@ -126,6 +164,6 @@ class ZwaveVolumeNumberEntity(ZWaveBaseEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
-        await self.info.node.async_set_value(
+        await self._async_set_value(
             self.info.primary_value, round(value * self.correction_factor)
         )

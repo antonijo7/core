@@ -1,4 +1,5 @@
 """Provides device automations for Vacuum."""
+
 from __future__ import annotations
 
 import voluptuous as vol
@@ -18,13 +19,13 @@ from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 from homeassistant.helpers.typing import ConfigType
 
-from . import DOMAIN, STATE_CLEANING, STATE_DOCKED
+from . import DOMAIN, VacuumActivity
 
 TRIGGER_TYPES = {"cleaning", "docked"}
 
 TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
     {
-        vol.Required(CONF_ENTITY_ID): cv.entity_id,
+        vol.Required(CONF_ENTITY_ID): cv.entity_id_or_uuid,
         vol.Required(CONF_TYPE): vol.In(TRIGGER_TYPES),
         vol.Optional(CONF_FOR): cv.positive_time_period_dict,
     }
@@ -48,7 +49,7 @@ async def async_get_triggers(
                 CONF_PLATFORM: "device",
                 CONF_DEVICE_ID: device_id,
                 CONF_DOMAIN: DOMAIN,
-                CONF_ENTITY_ID: entry.entity_id,
+                CONF_ENTITY_ID: entry.id,
                 CONF_TYPE: trigger,
             }
             for trigger in TRIGGER_TYPES
@@ -76,9 +77,9 @@ async def async_attach_trigger(
 ) -> CALLBACK_TYPE:
     """Attach a trigger."""
     if config[CONF_TYPE] == "cleaning":
-        to_state = STATE_CLEANING
+        to_state = VacuumActivity.CLEANING
     else:
-        to_state = STATE_DOCKED
+        to_state = VacuumActivity.DOCKED
 
     state_config = {
         CONF_PLATFORM: "state",

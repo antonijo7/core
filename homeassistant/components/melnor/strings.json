@@ -10,5 +10,39 @@
         "title": "Discovered Melnor Bluetooth valve"
       }
     }
+  },
+  "entity": {
+    "number": {
+      "frequency_duration_minutes": {
+        "name": "Schedule duration"
+      },
+      "frequency_interval_hours": {
+        "name": "Schedule interval"
+      },
+      "manual_minutes": {
+        "name": "Manual duration"
+      }
+    },
+    "sensor": {
+      "manual_cycle_end": {
+        "name": "Manual cycle end"
+      },
+      "next_cycle": {
+        "name": "Next cycle"
+      },
+      "rssi": {
+        "name": "RSSI"
+      }
+    },
+    "switch": {
+      "frequency": {
+        "name": "Schedule"
+      }
+    },
+    "time": {
+      "frequency_start_time": {
+        "name": "Schedule start time"
+      }
+    }
   }
 }

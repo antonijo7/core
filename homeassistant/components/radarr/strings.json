@@ -1,29 +1,49 @@
 {
   "config": {
-    "step": {
-      "user": {
-        "description": "API key can be retrieved automatically if login credentials were not set in application.\nYour API key can be found in Settings > General in the Radarr Web UI.",
-        "data": {
-          "api_key": "[%key:common::config_flow::data::api_key%]",
-          "url": "[%key:common::config_flow::data::url%]",
-          "verify_ssl": "[%key:common::config_flow::data::verify_ssl%]"
-        }
-      },
-      "reauth_confirm": {
-        "title": "[%key:common::config_flow::title::reauth%]",
-        "description": "The Radarr integration needs to be manually re-authenticated with the Radarr API"
-      }
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
     },
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "zeroconf_failed": "API key not found. Please enter it manually",
+      "unknown": "[%key:common::config_flow::error::unknown%]",
       "wrong_app": "Incorrect application reached. Please try again",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
+      "zeroconf_failed": "API key not found. Please enter it manually"
     },
-    "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+    "step": {
+      "reauth_confirm": {
+        "description": "The Radarr integration needs to be manually re-authenticated with the Radarr API",
+        "title": "[%key:common::config_flow::title::reauth%]"
+      },
+      "user": {
+        "data": {
+          "api_key": "[%key:common::config_flow::data::api_key%]",
+          "url": "[%key:common::config_flow::data::url%]",
+          "verify_ssl": "[%key:common::config_flow::data::verify_ssl%]"
+        },
+        "description": "API key can be retrieved automatically if login credentials were not set in application.\nYour API key can be found in Settings > General in the Radarr Web UI."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "health": {
+        "name": "Health"
+      }
+    },
+    "sensor": {
+      "movies": {
+        "name": "Movies",
+        "unit_of_measurement": "movies"
+      },
+      "queue": {
+        "name": "Queue",
+        "unit_of_measurement": "[%key:component::radarr::entity::sensor::movies::unit_of_measurement%]"
+      },
+      "start_time": {
+        "name": "Start time"
+      }
     }
   },
   "options": {
@@ -33,12 +53,6 @@
           "upcoming_days": "Number of upcoming days to display"
         }
       }
-    }
-  },
-  "issues": {
-    "removed_yaml": {
-      "title": "The Radarr YAML configuration has been removed",
-      "description": "Configuring Radarr using YAML has been removed.\n\nYour existing YAML configuration is not used by Home Assistant.\n\nRemove the YAML configuration from your configuration.yaml file and restart Home Assistant to fix this issue."
     }
   }
 }

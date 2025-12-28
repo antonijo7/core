@@ -1,11 +1,10 @@
 set_txt:
-  name: Set TXT
-  description: Set the TXT record of your DuckDNS subdomain.
   fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: duckdns
     txt:
-      name: TXT
-      description: Payload for the TXT record.
-      required: true
       example: "This domain name is reserved for use in documentation"
       selector:
         text:

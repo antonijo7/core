@@ -1,76 +1,104 @@
 """Support for Roborock vacuum class."""
+
+import logging
 from typing import Any
 
-from roborock.code_mappings import RoborockFanPowerCode, RoborockStateCode
-from roborock.typing import RoborockCommand
+from roborock.data import RoborockStateCode
+from roborock.exceptions import RoborockException
+from roborock.roborock_typing import RoborockCommand
+import voluptuous as vol
 
 from homeassistant.components.vacuum import (
-    STATE_CLEANING,
-    STATE_DOCKED,
-    STATE_ERROR,
-    STATE_IDLE,
-    STATE_PAUSED,
-    STATE_RETURNING,
     StateVacuumEntity,
+    VacuumActivity,
     VacuumEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify
+from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv, entity_platform
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import RoborockDataUpdateCoordinator
-from .device import RoborockCoordinatedEntity
-from .models import RoborockHassDeviceInfo
+from .const import (
+    DOMAIN,
+    GET_MAPS_SERVICE_NAME,
+    GET_VACUUM_CURRENT_POSITION_SERVICE_NAME,
+    SET_VACUUM_GOTO_POSITION_SERVICE_NAME,
+)
+from .coordinator import RoborockConfigEntry, RoborockDataUpdateCoordinator
+from .entity import RoborockCoordinatedEntityV1
+
+_LOGGER = logging.getLogger(__name__)
 
 STATE_CODE_TO_STATE = {
-    RoborockStateCode["1"]: STATE_IDLE,  # "Starting"
-    RoborockStateCode["2"]: STATE_IDLE,  # "Charger disconnected"
-    RoborockStateCode["3"]: STATE_IDLE,  # "Idle"
-    RoborockStateCode["4"]: STATE_CLEANING,  # "Remote control active"
-    RoborockStateCode["5"]: STATE_CLEANING,  # "Cleaning"
-    RoborockStateCode["6"]: STATE_RETURNING,  # "Returning home"
-    RoborockStateCode["7"]: STATE_CLEANING,  # "Manual mode"
-    RoborockStateCode["8"]: STATE_DOCKED,  # "Charging"
-    RoborockStateCode["9"]: STATE_ERROR,  # "Charging problem"
-    RoborockStateCode["10"]: STATE_PAUSED,  # "Paused"
-    RoborockStateCode["11"]: STATE_CLEANING,  # "Spot cleaning"
-    RoborockStateCode["12"]: STATE_ERROR,  # "Error"
-    RoborockStateCode["13"]: STATE_IDLE,  # "Shutting down"
-    RoborockStateCode["14"]: STATE_DOCKED,  # "Updating"
-    RoborockStateCode["15"]: STATE_RETURNING,  # "Docking"
-    RoborockStateCode["16"]: STATE_CLEANING,  # "Going to target"
-    RoborockStateCode["17"]: STATE_CLEANING,  # "Zoned cleaning"
-    RoborockStateCode["18"]: STATE_CLEANING,  # "Segment cleaning"
-    RoborockStateCode["22"]: STATE_DOCKED,  # "Emptying the bin" on s7+
-    RoborockStateCode["23"]: STATE_DOCKED,  # "Washing the mop" on s7maxV
-    RoborockStateCode["26"]: STATE_RETURNING,  # "Going to wash the mop" on s7maxV
-    RoborockStateCode["100"]: STATE_DOCKED,  # "Charging complete"
-    RoborockStateCode["101"]: STATE_ERROR,  # "Device offline"
+    RoborockStateCode.starting: VacuumActivity.IDLE,  # "Starting"
+    RoborockStateCode.attaching_the_mop: VacuumActivity.DOCKED,  # "Attaching the mop"
+    RoborockStateCode.charger_disconnected: VacuumActivity.IDLE,  # "Charger disconnected"
+    RoborockStateCode.idle: VacuumActivity.IDLE,  # "Idle"
+    RoborockStateCode.remote_control_active: VacuumActivity.CLEANING,  # "Remote control active"
+    RoborockStateCode.cleaning: VacuumActivity.CLEANING,  # "Cleaning"
+    RoborockStateCode.detaching_the_mop: VacuumActivity.DOCKED,  # "Detaching the mop"
+    RoborockStateCode.returning_home: VacuumActivity.RETURNING,  # "Returning home"
+    RoborockStateCode.manual_mode: VacuumActivity.CLEANING,  # "Manual mode"
+    RoborockStateCode.charging: VacuumActivity.DOCKED,  # "Charging"
+    RoborockStateCode.charging_problem: VacuumActivity.ERROR,  # "Charging problem"
+    RoborockStateCode.paused: VacuumActivity.PAUSED,  # "Paused"
+    RoborockStateCode.spot_cleaning: VacuumActivity.CLEANING,  # "Spot cleaning"
+    RoborockStateCode.error: VacuumActivity.ERROR,  # "Error"
+    RoborockStateCode.shutting_down: VacuumActivity.IDLE,  # "Shutting down"
+    RoborockStateCode.updating: VacuumActivity.DOCKED,  # "Updating"
+    RoborockStateCode.docking: VacuumActivity.RETURNING,  # "Docking"
+    RoborockStateCode.going_to_target: VacuumActivity.CLEANING,  # "Going to target"
+    RoborockStateCode.zoned_cleaning: VacuumActivity.CLEANING,  # "Zoned cleaning"
+    RoborockStateCode.segment_cleaning: VacuumActivity.CLEANING,  # "Segment cleaning"
+    RoborockStateCode.emptying_the_bin: VacuumActivity.DOCKED,  # "Emptying the bin" on s7+
+    RoborockStateCode.washing_the_mop: VacuumActivity.DOCKED,  # "Washing the mop" on s7maxV
+    RoborockStateCode.going_to_wash_the_mop: VacuumActivity.RETURNING,  # "Going to wash the mop" on s7maxV
+    RoborockStateCode.charging_complete: VacuumActivity.DOCKED,  # "Charging complete"
+    RoborockStateCode.device_offline: VacuumActivity.ERROR,  # "Device offline"
 }
 
-
-ATTR_STATUS = "status"
-ATTR_ERROR = "error"
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    config_entry: RoborockConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the Roborock sensor."""
-    coordinator: RoborockDataUpdateCoordinator = hass.data[DOMAIN][
-        config_entry.entry_id
-    ]
     async_add_entities(
-        RoborockVacuum(slugify(device_id), device_info, coordinator)
-        for device_id, device_info in coordinator.devices_info.items()
+        RoborockVacuum(coordinator) for coordinator in config_entry.runtime_data.v1
+    )
+    platform = entity_platform.async_get_current_platform()
+
+    platform.async_register_entity_service(
+        GET_MAPS_SERVICE_NAME,
+        None,
+        RoborockVacuum.get_maps.__name__,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    platform.async_register_entity_service(
+        GET_VACUUM_CURRENT_POSITION_SERVICE_NAME,
+        None,
+        RoborockVacuum.get_vacuum_current_position.__name__,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    platform.async_register_entity_service(
+        SET_VACUUM_GOTO_POSITION_SERVICE_NAME,
+        cv.make_entity_service_schema(
+            {
+                vol.Required("x"): vol.Coerce(int),
+                vol.Required("y"): vol.Coerce(int),
+            },
+        ),
+        RoborockVacuum.async_set_vacuum_goto_position.__name__,
+        supports_response=SupportsResponse.NONE,
     )
 
 
-class RoborockVacuum(RoborockCoordinatedEntity, StateVacuumEntity):
+class RoborockVacuum(RoborockCoordinatedEntityV1, StateVacuumEntity):
     """General Representation of a Roborock vacuum."""
 
     _attr_icon = "mdi:robot-vacuum"
@@ -79,54 +107,55 @@ class RoborockVacuum(RoborockCoordinatedEntity, StateVacuumEntity):
         | VacuumEntityFeature.STOP
         | VacuumEntityFeature.RETURN_HOME
         | VacuumEntityFeature.FAN_SPEED
-        | VacuumEntityFeature.BATTERY
-        | VacuumEntityFeature.STATUS
         | VacuumEntityFeature.SEND_COMMAND
         | VacuumEntityFeature.LOCATE
         | VacuumEntityFeature.CLEAN_SPOT
         | VacuumEntityFeature.STATE
         | VacuumEntityFeature.START
     )
-    _attr_fan_speed_list = RoborockFanPowerCode.values()
+    _attr_translation_key = DOMAIN
+    _attr_name = None
 
     def __init__(
         self,
-        unique_id: str,
-        device: RoborockHassDeviceInfo,
         coordinator: RoborockDataUpdateCoordinator,
     ) -> None:
         """Initialize a vacuum."""
         StateVacuumEntity.__init__(self)
-        RoborockCoordinatedEntity.__init__(self, unique_id, device, coordinator)
+        RoborockCoordinatedEntityV1.__init__(
+            self,
+            coordinator.duid_slug,
+            coordinator,
+        )
 
     @property
-    def state(self) -> str | None:
+    def fan_speed_list(self) -> list[str]:
+        """Get the list of available fan speeds."""
+        return self._device_status.fan_power_options
+
+    @property
+    def activity(self) -> VacuumActivity | None:
         """Return the status of the vacuum cleaner."""
+        assert self._device_status.state is not None
         return STATE_CODE_TO_STATE.get(self._device_status.state)
-
-    @property
-    def status(self) -> str | None:
-        """Return the status of the vacuum cleaner."""
-        return self._device_status.status
-
-    @property
-    def battery_level(self) -> int | None:
-        """Return the battery level of the vacuum cleaner."""
-        return self._device_status.battery
 
     @property
     def fan_speed(self) -> str | None:
         """Return the fan speed of the vacuum cleaner."""
-        return self._device_status.fan_power
-
-    @property
-    def error(self) -> str | None:
-        """Get the error str if an error code exists."""
-        return self._device_status.error
+        return self._device_status.fan_power_name
 
     async def async_start(self) -> None:
         """Start the vacuum."""
-        await self.send(RoborockCommand.APP_START)
+        if self._device_status.in_returning == 1:
+            await self.send(RoborockCommand.APP_CHARGE)
+        elif self._device_status.in_cleaning == 2:
+            await self.send(RoborockCommand.RESUME_ZONED_CLEAN)
+        elif self._device_status.in_cleaning == 3:
+            await self.send(RoborockCommand.RESUME_SEGMENT_CLEAN)
+        elif self._device_status.in_cleaning == 4:
+            await self.send(RoborockCommand.APP_RESUME_BUILD_MAP)
+        else:
+            await self.send(RoborockCommand.APP_START)
 
     async def async_pause(self) -> None:
         """Pause the vacuum."""
@@ -152,16 +181,12 @@ class RoborockVacuum(RoborockCoordinatedEntity, StateVacuumEntity):
         """Set vacuum fan speed."""
         await self.send(
             RoborockCommand.SET_CUSTOM_MODE,
-            [k for k, v in RoborockFanPowerCode.items() if v == fan_speed],
+            [self._device_status.get_fan_speed_code(fan_speed)],
         )
-        await self.coordinator.async_request_refresh()
 
-    async def async_start_pause(self):
-        """Start, pause or resume the cleaning task."""
-        if self.state == STATE_CLEANING:
-            await self.async_pause()
-        else:
-            await self.async_start()
+    async def async_set_vacuum_goto_position(self, x: int, y: int) -> None:
+        """Send vacuum to a specific target point."""
+        await self.send(RoborockCommand.APP_GOTO_TARGET, [x, y])
 
     async def async_send_command(
         self,
@@ -171,3 +196,48 @@ class RoborockVacuum(RoborockCoordinatedEntity, StateVacuumEntity):
     ) -> None:
         """Send a command to a vacuum cleaner."""
         await self.send(command, params)
+
+    async def get_maps(self) -> ServiceResponse:
+        """Get map information such as map id and room ids."""
+        home_trait = self.coordinator.properties_api.home
+        return {
+            "maps": [
+                {
+                    "flag": vacuum_map.map_flag,
+                    "name": vacuum_map.name,
+                    "rooms": {
+                        # JsonValueType does not accept a int as a key - was not a
+                        # issue with previous asdict() implementation.
+                        room.segment_id: room.name  # type: ignore[misc]
+                        for room in vacuum_map.rooms
+                    },
+                }
+                for vacuum_map in (home_trait.home_map_info or {}).values()
+            ]
+        }
+
+    async def get_vacuum_current_position(self) -> ServiceResponse:
+        """Get the current position of the vacuum from the map."""
+        map_content_trait = self.coordinator.properties_api.map_content
+        try:
+            await map_content_trait.refresh()
+        except RoborockException as err:
+            _LOGGER.debug("Failed to refresh map content: %s", err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="map_failure",
+            ) from err
+        if map_content_trait.map_data is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="map_failure",
+            )
+        if (robot_position := map_content_trait.map_data.vacuum_position) is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="position_not_found"
+            )
+
+        return {
+            "x": robot_position.x,
+            "y": robot_position.y,
+        }

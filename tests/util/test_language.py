@@ -1,4 +1,5 @@
 """Test Home Assistant language util methods."""
+
 from __future__ import annotations
 
 import pytest
@@ -191,6 +192,9 @@ def test_sr_latn() -> None:
         "sr-RS",
     ]
 
+    # Prefer exact match with code
+    assert language.matches("sr", ["sr-Latn", "sr"]) == ["sr", "sr-Latn"]
+
 
 def test_no_nb_same() -> None:
     """Test that the no/nb are interchangeable."""
@@ -226,3 +230,39 @@ def test_no_nb_prefer_exact_regions() -> None:
         "no-AA",
         ["en-US", "en-GB", "no-AA", "nb-AA"],
     ) == ["no-AA", "nb-AA"]
+
+
+def test_he_iw_same() -> None:
+    """Test that the he/iw are interchangeable."""
+    assert language.matches(
+        "he",
+        ["en-US", "en-GB", "iw"],
+    ) == ["iw"]
+    assert language.matches(
+        "iw",
+        ["en-US", "en-GB", "he"],
+    ) == ["he"]
+
+
+def test_he_iw_prefer_exact() -> None:
+    """Test that the exact language is preferred even if an interchangeable language is available."""
+    assert language.matches(
+        "he",
+        ["en-US", "en-GB", "iw", "he"],
+    ) == ["he", "iw"]
+    assert language.matches(
+        "he",
+        ["en-US", "en-GB", "he", "iw"],
+    ) == ["he", "iw"]
+
+
+def test_he_iw_prefer_exact_regions() -> None:
+    """Test that the exact language/region is preferred."""
+    assert language.matches(
+        "he-IL",
+        ["en-US", "en-GB", "iw-IL", "he-IL"],
+    ) == ["he-IL", "iw-IL"]
+    assert language.matches(
+        "he-IL",
+        ["en-US", "en-GB", "he-IL", "iw-IL"],
+    ) == ["he-IL", "iw-IL"]
